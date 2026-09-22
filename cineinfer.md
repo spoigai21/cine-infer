@@ -74,7 +74,22 @@ against test is what turns "beats the baseline" into a meaningless claim.
 training data, but user A's 2008 test ratings are still predicted by a model that saw user B's 2015
 ratings, including popularity signals that didn't exist in 2008. A **global time cutoff** (everything
 after date T is test) is stricter. The plan uses the per-user split as primary and **measures all
-three — per-user, global cutoff, random — to report how much each inflates metrics.**
+three — per-user, global cutoff, random — to report how much each inflates metrics.** Under the
+global cutoff, users who start rating after the cutoff have no train data. On every split, a user
+is evaluated only if they have ≥1 train positive. The excluded count is reported per split, and the
+comparison table notes that the evaluated users differ between splits.
+
+**Final test run.** After tuning on validation, every model (baselines included) is **retrained on
+train + validation** with its chosen config frozen, then scored once on test, masking train +
+validation items.
+
+**Ranker labels come from inside train.** The last ~1/8 of each user's train slice (`train_tail`)
+is held out as the ranker's training labels. Its candidates come from a retriever trained only on
+the earlier part of train, so validation stays free for tuning the ranker.
+
+**One definition of a positive for all models.** A rating ≥4 is a positive. Ratings below 4 are
+dropped from model inputs (not treated as negatives) but still count as "seen" for masking. ALS,
+EASE, item-kNN, most-popular and the two-tower model all train on the same binary matrix.
 
 **Ranking is against the full catalog.** Score every movie the user has not rated in training, and
 filter already-rated movies out of the recommendations. Sampled negatives (ranking the true item
@@ -85,7 +100,7 @@ items, full-catalog scoring is cheap.
 
 | Metric | What it answers |
 |---|---|
-| Recall@10 | of the movies the user actually liked, how many made the top 10 |
+| Recall@10 (capped) | of the movies the user actually liked, how many made the top 10; denominator is min(#liked, 10), so it's labeled "capped" and not compared directly to papers that divide by #liked |
 | NDCG@10 | did the liked ones land near the top of the 10 |
 | **AUC** | **ranking held-out liked items (rating ≥ 4) above unrated items sampled from the catalog** — not vs held-out low ratings |
 | Catalog coverage | share of the catalog ever recommended (catches "just recommend blockbusters"); denominator defined in §2 |
@@ -96,7 +111,11 @@ items, full-catalog scoring is cheap.
 - "Relevant" = a held-out rating of **4.0 or higher**.
 - Every neural model is reported next to **all four baselines** on the same test slice.
 - A model that doesn't beat the best tuned baseline is reported as a failure, not dropped.
-- Report median and spread over several seeds, not a single best run.
+- Per-user metrics are averaged with the **mean** over users (a per-user median is usually 0).
+  Across seeds, report the **median and spread** of those means, not a single best run.
+- Ties in scores are broken by `(-score, movieId)` so every run reproduces.
+- Users with no relevant held-out items, or with nothing left to recommend, are skipped and
+  counted, and the counts are reported.
 
 ---
 
@@ -124,12 +143,12 @@ after the baselines run, **before** the neural models train.
 | Phase | Output | Done when |
 |---|---|---|
 | 0. Setup | repo, `make` targets, Docker Compose (Spark, Airflow, API), dataset download script with checksum, data git-ignored | `make data` reproduces the dataset from scratch |
-| 1. Data + splits | PySpark cleaning; train/validation/test slices per user, plus global-cutoff and random splits for comparison; rating-burst measurement; tests on a small fixture | row counts reconcile to 25,000,095; **zero train/val/test time overlap per user, asserted in a test**; burst statistic reported |
-| 2. Evaluation harness | metric code (Recall@10, NDCG@10, AUC, coverage), full-catalog ranking, seen-item masking, deterministic tie-breaking | metrics match hand-computed values on a toy example, in a unit test |
+| 1. Data + splits | PySpark cleaning; train/validation/test slices per user (train further split into `train_core` / `train_tail` for the ranker), plus global-cutoff and random splits for comparison; rating-burst measurement; tests on a small fixture | row counts reconcile to 25,000,095; **zero train/val/test time overlap per user, asserted in a test**; burst statistic reported |
+| 2. Evaluation harness | metric code (Recall@10, NDCG@10, AUC, coverage) with mean-over-users aggregation, full-catalog ranking, seen-item masking (train for val; train + val for test), deterministic `(-score, movieId)` tie-breaking | metrics match hand-computed values on a toy example, in a unit test |
 | 3. Baselines | most-popular, item-kNN, implicit ALS, EASE | `results/baselines.csv` generated from code, not hand-typed; each baseline tuned on validation with its budget logged |
 | 4. Predictions | fill in §4, commit | commit timestamped before any neural training |
-| 5. Two-tower | PyTorch model; user tower built from rating history (pooled item embeddings), not a user-ID embedding; in-batch negatives with logQ correction (Yi et al. 2019) | beats most-popular; results over 3+ seeds; tuned only on validation |
-| 6. Ranker | second-stage model over retrieved candidates, using tag-genome features | ablation: retrieval-only vs retrieval + ranking. **Clean stopping point: phases 0–6 plus the write-up stand on their own.** |
+| 5. Two-tower | PyTorch model; user tower built from rating history (pooled item embeddings), not a user-ID embedding; history for each training pair uses only positives rated before the target; in-batch negatives with logQ correction (Yi et al. 2019) and duplicate-item masking | beats most-popular; results over 3+ seeds; tuned only on validation |
+| 6. Ranker | second-stage model over retrieved candidates, using tag-genome features; trained on `train_tail` labels with candidates from a `train_core`-only retriever | ablation: retrieval-only vs retrieval + ranking. **Clean stopping point: phases 0–6 plus the write-up stand on their own.** |
 | 7. Serving | FastAPI + precomputed embeddings; brute-force dot product vs FAISS measured; cold-start fallback for unknown user IDs | load test reports p50/p99; unknown-user path returns popular items |
 | 8. Orchestration | Airflow DAG: prep → train → evaluate → publish-if-better | a deliberately worse model is refused publication |
 | 9. pandas vs Spark benchmark | timing at 1M / 5M / 25M, JVM startup and local-mode overhead timed separately from compute; one of Polars or DuckDB included | crossover measured and charted, with and without startup cost |

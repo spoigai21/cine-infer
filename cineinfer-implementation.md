@@ -19,11 +19,11 @@ the commands, a code sketch, **how you know it worked**, and the edge cases that
 
 ## Phase 0 — Setup
 
-### 0.1 Create the repo
+### 0.1 Set up the environment
+
+The repo already exists (`cine-infer/`, initialized with these docs). From its root:
 
 ```bash
-mkdir cineinfer && cd cineinfer
-git init
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
@@ -41,7 +41,7 @@ If `java -version` fails, Spark will fail later with a confusing gateway error. 
 ### 0.3 Folder layout
 
 ```
-cineinfer/
+cine-infer/
   data/            # downloaded files (git-ignored)
   src/
     data_prep.py   # Spark cleaning + splits
@@ -143,6 +143,26 @@ rand = ratings.withColumn("u", F.rand(seed=42)).withColumn("split",
         F.when(F.col("u") < 0.8, "train").when(F.col("u") < 0.9, "val").otherwise("test"))
 ```
 
+Write `t80` and `t90` into `results/data_stats.csv` so the global split can be rebuilt exactly
+(`approxQuantile` is approximate; don't recompute it on every run).
+
+**Cold-start users in the global split.** Anyone whose first rating is after `t80` has no train
+data, and anyone whose first rating is after `t90` has neither train nor val data. Rule, applied to **all three
+splits**: a user is evaluated only if they have at least one train positive (a rating ≥4, §1.6). Drop the others from that split's evaluation and **write the excluded count per
+split to `results/data_stats.csv`**. The evaluated users therefore differ between splits; say so
+next to the split-comparison table in the README, because it's part of why the numbers differ.
+
+### 1.3a Ranker-label slice (inside train)
+
+The ranker (Phase 6) needs its own labels, and they can't come from validation, because validation
+is needed to tune the ranker. Carve the ranker's labels out of the **end of train**:
+
+- `train_core` = the first 7/8 of each user's train rows (≈70% of the user's ratings)
+- `train_tail` = the last 1/8 of each user's train rows (≈10%)
+
+Use the same `(timestamp, movieId)` ordering as §1.2. `train_tail` exists only to train the ranker
+(Phase 6). Every other model trains on the full train slice.
+
 ### 1.4 The rating-burst check
 
 MovieLens timestamps are when someone *rated*, not when they *watched*. Many users rate in one
@@ -165,6 +185,18 @@ affinity, and join the tag genome (`genome-scores.csv`) for item features.
 **Computing any feature over all splits leaks the future into training.** This is the single
 easiest way to ruin the project without noticing.
 
+Features are computed **once per training set**. Ranker training uses features from `train_core`,
+validation scoring uses features from full train, and final test scoring uses features from
+train + val (§2.1).
+
+### 1.6 What counts as a positive (fixed for every model)
+
+A rating **≥ 4.0 is a positive; ratings below 4.0 are dropped** from all model inputs: the item-kNN
+and EASE matrices, the ALS labels, and the two-tower histories. They are not negatives or zeros.
+Most-popular counts only ratings ≥ 4 as well. Every model sees the same binary interaction matrix,
+so no model gets extra signal the others don't. (Low ratings still count as "seen" and are masked
+at evaluation; see Phase 2.)
+
 **Done when (all four must pass):**
 1. `train + val + test` row counts sum to 25,000,095.
 2. For every user: `max(train.timestamp) <= min(val.timestamp)` and `max(val.timestamp) <= min(test.timestamp)`. Write this as a pytest over the fixture and as a Spark assertion over the real data.
@@ -183,34 +215,78 @@ easiest way to ruin the project without noticing.
 ## Phase 2 — Evaluation harness (write this before any model)
 
 ```python
-def evaluate(score_fn, split_df, train_items_by_user, k=10):
-    """score_fn(user) -> array of scores over ALL items."""
-    recalls, ndcgs = [], []
-    for user, relevant in split_df:                    # relevant = test items rated >= 4
+def top_k(scores, k):
+    """Top-k item indices, ordered by (-score, item_id). Deterministic under ties."""
+    k = min(k, len(scores))
+    order = np.lexsort((np.arange(len(scores)), -scores))  # last key is primary
+    return order[:k]
+
+def evaluate(score_fn, eval_items_by_user, seen_items_by_user, k=10):
+    """
+    score_fn(user) -> array of scores over ALL items.
+    eval_items_by_user: user -> set of held-out items rated >= 4 (val or test slice).
+    seen_items_by_user: user -> every item the user rated (any rating) in the data the model
+        was trained on: train when scoring val, train + val when scoring test (§2.1).
+    """
+    recalls, ndcgs, skipped_no_relevant, skipped_all_seen = [], [], 0, 0
+    for user, relevant in eval_items_by_user.items():
         if not relevant:
-            continue                                   # count these; report the number
-        scores = score_fn(user)
-        scores[list(train_items_by_user[user])] = -np.inf   # never recommend seen items
-        top = np.argpartition(-scores, k)[:k]
-        top = top[np.argsort(-scores[top])]
+            skipped_no_relevant += 1
+            continue
+        scores = score_fn(user).astype(np.float64)   # copy; never mutate the model's array
+        scores[list(seen_items_by_user[user])] = -np.inf   # never recommend seen items
+        if not np.isfinite(scores).any():
+            skipped_all_seen += 1
+            continue
+        top = top_k(scores, k)
+        top = top[np.isfinite(scores[top])]          # never "recommend" a masked item
         hits = [1 if i in relevant else 0 for i in top]
         recalls.append(sum(hits) / min(len(relevant), k))
         dcg = sum(h / np.log2(i + 2) for i, h in enumerate(hits))
         idcg = sum(1 / np.log2(i + 2) for i in range(min(len(relevant), k)))
         ndcgs.append(dcg / idcg)
-    return np.median(recalls), np.median(ndcgs)
+    return {"recall@10": np.mean(recalls), "ndcg@10": np.mean(ndcgs),
+            "n_users": len(recalls),
+            "skipped_no_relevant": skipped_no_relevant,
+            "skipped_all_seen": skipped_all_seen}
 ```
 
+(A full `lexsort` over 62k items per user is fine for correctness. If it's too slow, take the top
+~k+100 with `argpartition` and `lexsort` only those, extending the window when the boundary score
+ties.)
+
 **Rules baked in**
+- **Average per-user metrics with the mean, not the median.** Most users have 0–2 hits in the top
+  10, so a per-user median is often exactly 0 for every model. Medians are for **across seeds**
+  (§3 of the plan): compute the mean over users for each seed, then report the median and spread
+  of those values over seeds.
+- **Recall@10 is capped:** the denominator is `min(|relevant|, 10)`, so a user with 30 liked test
+  movies can still reach 1.0. Call it "Recall@10 (capped)" in the README, since some papers
+  divide by `|relevant|` and their numbers aren't directly comparable.
 - Score **all** items, not a sample of 100. Sampled negatives can flip which model looks better (Krichene & Rendle, 2020).
-- Mask items seen in train (and val, when scoring test).
+- Mask every item the user rated (any rating) in the model's training data: train when scoring
+  validation, train + val when scoring test. Pass that as `seen_items_by_user`.
 - **AUC** = probability a held-out liked item outranks a random unrated item. Sample ~100 unrated items per user for this metric only, and say so.
 - **Coverage** = distinct items appearing in anyone's top 10, divided by items with ≥1 train rating. State the denominator.
 
 **Edge cases**
-- `np.argpartition` with `k >= len(scores)` throws — guard it.
-- All-`-inf` scores (user has rated everything in the filtered catalog) — skip the user, count it.
-- Ties in scores make ordering arbitrary; sort by `(-score, item_id)` so runs reproduce.
+- `np.argpartition` with `k >= len(scores)` throws. `top_k` clamps `k`; keep the guard if you switch to the argpartition fast path.
+- All-`-inf` scores (user has rated everything in the filtered catalog): skip the user and count it (`skipped_all_seen`).
+- Fewer than k unmasked items: the `isfinite` filter drops masked items instead of padding the list with them.
+- Ties in scores make ordering arbitrary. `top_k` sorts by `(-score, item_id)` so runs reproduce. Most-popular and EASE produce many ties, so this matters there.
+- Report `skipped_no_relevant` and `skipped_all_seen` alongside every metric row.
+
+### 2.1 Final test protocol (same for every model)
+
+1. Tune hyperparameters on **validation**. The model trains on train, and evaluation masks train.
+   Record the chosen config, including the epoch/iteration count for iterative models.
+2. **Retrain on train + val** with that config fixed (no early stopping, same epoch count), and
+   recompute train-only features on train + val.
+3. Score the **test** slice once, masking train + val.
+
+Every model, baselines included, follows these steps exactly. Retraining uses the most recent
+behavior, which matters most under a time-ordered split. It's also what production does, and it's
+the protocol used in the iALS re-evaluation (Rendle et al.).
 
 ---
 
@@ -220,7 +296,8 @@ All four are scored the same way, ranking against the full catalog.
 
 ### 3.1 Most popular
 
-Count ratings per movie in train, recommend the top 10 the user hasn't rated. This is the floor.
+Count positives (ratings ≥4, §1.6) per movie in train, and recommend the top 10 the user hasn't
+rated. This is the floor.
 
 ### 3.2 Item-to-item similarity
 
@@ -237,13 +314,18 @@ als = ALS(userCol="userId", itemCol="movieId", ratingCol="label",
           coldStartStrategy="drop", seed=42)
 ```
 
-`label` = 1.0 for ratings ≥4. Tune `rank`, `regParam`, `alpha` on **validation** only.
+Input rows are **only the positives** (ratings ≥4), each with `label = 1.0`. Ratings below 4 are
+dropped, not passed as `label = 0` (§1.6). Tune `rank`, `regParam`, `alpha` on **validation** only.
+
+`coldStartStrategy="drop"` only affects `transform()`. For full-catalog scoring, compute
+`userFactors @ itemFactors.T` yourself. Movies with no train positives have no factor, so give
+them a score of `-inf`.
 
 ### 3.4 EASE (closed form, ~20 lines, very strong here)
 
 ```python
 import numpy as np
-def ease(X, lam=250.0):          # X: users × items, binary, scipy sparse
+def ease(X, lam=250.0):          # X: users × items, 1 = rated ≥4 (§1.6), scipy sparse
     G = (X.T @ X).toarray()
     G[np.diag_indices(G.shape[0])] += lam
     P = np.linalg.inv(G)
@@ -267,7 +349,7 @@ each with its tuned hyperparameters and the validation score that chose them.
 Fill in the blanks in `cineinfer.md` §4 using the baseline numbers, then:
 
 ```bash
-git add project-ideas/cineinfer.md && git commit -m "Predictions before neural training"
+git add cineinfer.md && git commit -m "Predictions before neural training"
 ```
 
 **Done when:** `git log` shows this commit **before** any two-tower training commit. That timestamp
@@ -291,10 +373,26 @@ negatives. Cross-entropy over the batch, with **logQ correction**: subtract `log
 each item from its logit, or popular movies get punished for being popular.
 
 ```python
-logits = user_vecs @ item_vecs.T          # B × B
-logits = logits - torch.log(item_prior)   # logQ correction, item_prior from train counts
+# user_vecs: B × d, item_vecs: B × d, target_ids: B (movie index of each row's positive)
+logits = user_vecs @ item_vecs.T                       # B × B
+logits = logits - torch.log(item_prior[target_ids])    # logQ per column; item_prior from train counts
+# The same movie can appear twice in a batch. That copy is a false negative, so mask it out
+# (keeping each row's own diagonal entry).
+dup = target_ids[:, None] == target_ids[None, :]
+dup.fill_diagonal_(False)
+logits = logits.masked_fill(dup, float("-inf"))
 loss = F.cross_entropy(logits, torch.arange(len(logits), device=logits.device))
 ```
+
+**Building the training pairs: history comes strictly before the target.** For a user's positive
+at position t (in the `(timestamp, movieId)` order of §1.2), the history is that user's positives
+at positions < t. The target must be excluded, and so must anything rated after it. Using the whole
+train history minus the target lets the model learn from future ratings. The eval-time user vector
+then comes from a history that has no future in it, so training and serving no longer match.
+Truncate the history to the most recent N positives (N is a hyperparameter, e.g. 50) and skip
+pairs with an empty history. Because of the rating bursts in §1.4, items sharing the target's
+timestamp are "before" it only because of the movieId tiebreak. Keep that rule consistent and
+mention it.
 
 ### 5.3 Practical settings
 
@@ -310,7 +408,7 @@ loss = F.cross_entropy(logits, torch.arange(len(logits), device=logits.device))
 - **Loss goes to 0 immediately:** you leaked the target into the input. Check that the user history excludes the target movie.
 - **MPS numerical oddities:** if results look wrong on MPS, rerun on CPU to confirm; note the discrepancy if any.
 - **Users whose train history is empty after filtering to ratings ≥4:** skip them in training and use the popular fallback at serving.
-- **Embedding table size:** 62k × 64 floats ≈ 16 MB. Fine in memory, too big for git — save to `models/` (git-ignored).
+- **Embedding table size:** 62k × 64 floats ≈ 16 MB. Fine in memory. Keep all weights out of git anyway (they're regenerated by the pipeline); save to `models/` (git-ignored).
 
 ---
 
@@ -319,6 +417,27 @@ loss = F.cross_entropy(logits, torch.arange(len(logits), device=logits.device))
 Take the top ~200 candidates from the two-tower model, then re-score with richer features: tag
 genome vector, movie popularity and mean rating, genre overlap with the user's history, recency.
 A small MLP or gradient-boosted trees is enough.
+
+### 6.1 Where the ranker's labels come from
+
+The ranker **can't train on validation**, because validation is needed to tune it and to compare it
+against retrieval alone. It trains on the `train_tail` slice from §1.3a:
+
+1. Train a two-tower model on **`train_core` only**, with the tuned retrieval config.
+2. For each user, retrieve the top ~200 from that model, masking `train_core` items.
+3. Label each candidate 1 if it's a `train_tail` positive, else 0. Features come from
+   `train_core` only (§1.5).
+4. Fit the ranker on those rows, using a pointwise or pairwise loss.
+
+The candidates in step 2 have to come from a model that **never saw `train_tail`**. If you use the
+full-train retriever, the tail positives it was trained on rank artificially high, and the ranker
+learns a distribution it will never see at serving time.
+
+**Evaluation on validation:** full-train retriever → top ~200 (masking train) → ranker with
+full-train features → top 10. **Test:** repeat §2.1: retrain the retriever on train + val and the
+ranker on its shifted equivalent (retriever trained on train, labels from val), then score test
+once. Report the recall ceiling (share of relevant items that land in the top 200) next to the
+ablation, since the ranker can't recover what retrieval missed.
 
 **Done when:** `results/ablation.csv` compares retrieval-only vs retrieval + ranking on validation,
 then on test **once**. This is the clean stopping point.
