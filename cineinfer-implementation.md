@@ -3,9 +3,9 @@
 Step-by-step build instructions for the plan in `cineinfer.md`. Each step has: what you're doing,
 the commands, a code sketch, **how you know it worked**, and the edge cases that bite here.
 
-> **Status of the code below:** starting points written from the plan, **not yet executed**.
-> Nothing here has been run against the real dataset. Treat every snippet as a draft to verify,
-> and trust the "how you know it worked" checks over the code.
+> **Status of the code below:** Phase 0 is built and verified; its section describes the actual repo.
+> From Phase 1 on, snippets are starting points written from the plan, **not yet executed**.
+> Treat every snippet as a draft to verify, and trust the "how you know it worked" checks over the code.
 
 **Golden rules for the whole project**
 
@@ -19,73 +19,133 @@ the commands, a code sketch, **how you know it worked**, and the edge cases that
 
 ## Phase 0 — Setup
 
-### 0.1 Set up the environment
+**Status: built and verified** (`make data`, `make check-java` and `make test` all pass). This
+section describes what's actually in the repo.
 
-The repo already exists (`cine-infer/`, initialized with these docs). From its root:
+### 0.1 Prerequisites (macOS)
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-python -m pip install --upgrade pip
-```
+- **Python 3.11** (`python3.11`). PySpark 3.5 and every dependency below support it.
+- **Java 17 or 11 for Spark.** Spark 3.5 does **not** support Java 21, which is what SDKMAN and
+  Homebrew install by default. Install a native arm64 JDK 17 with
+  `/opt/homebrew/bin/brew install openjdk@17`. An x86_64 JDK works under Rosetta, but it's slower
+  and will skew the Phase 9 timings.
+- **`make` from the Command Line Tools.** If `make` fails with an `xcodebuild` error (on this
+  machine, Xcode 27 doesn't run on macOS 26.6), point the developer tools at the Command Line
+  Tools: `sudo xcode-select -s /Library/Developer/CommandLineTools`.
+- **Docker** (Docker Desktop), only needed for the Compose stack.
 
 ### 0.2 Install dependencies
 
 ```bash
-pip install "pyspark==3.5.*" pandas numpy scipy torch pytest fastapi uvicorn \
-            polars duckdb matplotlib tqdm
-java -version   # Spark needs Java 11 or 17. If missing: brew install openjdk@17
+make install        # creates .venv (python3.11) and installs requirements.txt
+make check-java     # starts a local Spark session with the selected JDK
 ```
 
-If `java -version` fails, Spark will fail later with a confusing gateway error. Fix it now.
+`requirements.txt` pins `pyspark==3.5.*` and **`numpy<2`**, because PySpark 3.5's MLlib isn't
+fully numpy-2 compatible. The API image has its own smaller `docker/requirements-api.txt`.
+
+**Choosing the JDK.** The Makefile **ignores the `JAVA_HOME` in your shell** (SDKMAN sets it to
+Java 21) and uses the first of these that exists: native Homebrew `openjdk@17`, SDKMAN
+`17.0.5-tem`, Intel Homebrew `openjdk@17`, Intel Homebrew `openjdk@11`. Override with
+`make SPARK_JAVA_HOME=/path/to/jdk <target>`. Any script that starts Spark outside `make` must set
+`JAVA_HOME` the same way, or Spark fails with a confusing gateway error.
 
 ### 0.3 Folder layout
 
 ```
 cine-infer/
-  data/            # downloaded files (git-ignored)
+  data/                     # MovieLens download + derived parquet (git-ignored)
   src/
-    data_prep.py   # Spark cleaning + splits
-    baselines.py   # popular, item-kNN, ALS, EASE
-    evaluate.py    # metrics, full-catalog ranking
-    two_tower.py   # PyTorch retrieval model
-    ranker.py      # second-stage model
-    serve.py       # FastAPI
+    data_prep.py            # Phase 1: Spark cleaning + splits
+    evaluate.py             # Phase 2: metrics, full-catalog ranking
+    baselines.py            # Phase 3: popular, item-kNN, ALS, EASE
+    two_tower.py            # Phase 5: PyTorch retrieval model
+    ranker.py               # Phase 6: second-stage model
+    serve.py                # FastAPI (Phase 0: /health only; /recommend in Phase 7)
+  scripts/
+    get_data.sh             # download + verify MovieLens 25M
+    ml-25m.zip.sha256       # recorded checksum (committed; the data is not)
+    make_fixture.py         # generates the synthetic test fixture
   tests/
-    fixtures/tiny_ratings.csv   # ~200 rows, committed, for CI
-  results/         # CSVs — committed, these are the source of truth
-  README.md
-  Makefile
+    fixtures/tiny_ratings.csv, tiny_movies.csv   # synthetic, 200 ratings, committed
+    test_setup.py           # Phase 0 checks
+  dags/                     # Airflow DAGs (Phase 8)
+  docker/                   # api.Dockerfile, requirements-api.txt
+  results/                  # CSVs — committed, the source of truth for every number
+  .github/workflows/ci.yml  # pytest on the fixture
+  docker-compose.yml, Makefile, requirements.txt, pytest.ini, .env.example
 ```
 
-### 0.4 .gitignore (do this before the first commit)
+Only `src/serve.py` exists so far; the other `src/` modules arrive in their phases.
 
-```
-data/
-.venv/
-*.pt
-*.parquet
-__pycache__/
-.DS_Store
-```
+### 0.4 .gitignore
 
-### 0.5 Download script
+Written before the first code commit. It ignores `data/`, `models/`, `*.pt`, `*.parquet`, `.venv/`,
+`.env`, Python, pytest and Spark caches, and Airflow's runtime state (`airflow/logs/`,
+`airflow/db/`). `tests/test_setup.py` asserts that `data/` stays ignored.
 
-```bash
-# scripts/get_data.sh
-set -euo pipefail
-mkdir -p data && cd data
-curl -O https://files.grouplens.org/datasets/movielens/ml-25m.zip
-shasum -a 256 ml-25m.zip | tee ml-25m.zip.sha256   # record it; compare on later runs
-unzip -o ml-25m.zip
-```
+### 0.5 Download script (`make data`)
 
-**Done when:** `data/ml-25m/ratings.csv` exists and
-`wc -l data/ml-25m/ratings.csv` prints **25000096** (25,000,095 ratings + 1 header line).
+`scripts/get_data.sh` is safe to re-run:
+
+- It skips the download if `data/ml-25m.zip` exists and passes both checksums. The **MD5 is the
+  one GroupLens publishes** (`ml-25m.zip.md5`). The **SHA-256** was recorded on the first download
+  in `scripts/ml-25m.zip.sha256`, which is committed.
+- It downloads to `ml-25m.zip.part` and renames only after the download finishes, so an
+  interrupted run never leaves a truncated zip that looks complete. A zip that fails its checksum
+  is deleted and downloaded again.
+- It re-extracts, then checks that `ratings.csv` has **25,000,096** lines and that `movies.csv`,
+  `genome-scores.csv`, `genome-tags.csv`, `tags.csv` and `links.csv` exist.
+
+### 0.6 Test fixture (`make fixture`)
+
+`tests/fixtures/` is **synthetic, not a MovieLens sample**, because the license forbids
+redistribution. It has the same schema. `scripts/make_fixture.py` (seeded, byte-identical on
+re-run) builds 200 ratings from 9 users over 40 movies, with the edge cases later phases must
+handle:
+
+- a user with 8 ratings (Phase 1 routes them to train only)
+- bursts of ratings sharing one timestamp (tests the `movieId` tiebreak)
+- a user whose last 6 ratings are all below 4 (no relevant val/test items)
+- users who start late in the timeline (cold users under the global-cutoff split)
+- a movie with no ratings
+- titles with commas and quotes
+
+CI regenerates the fixture and fails if it differs from the committed copy.
+
+### 0.7 Docker Compose (`make up` / `make down`)
+
+| Service | Image | Port |
+|---|---|---|
+| `spark-master`, `spark-worker` | `apache/spark:3.5.7` (standalone cluster, 4 cores / 4 GB worker) | 8080 (UI), 7077 |
+| `airflow` | `apache/airflow:2.10.5-python3.11`, `standalone` mode (SQLite) | **8081** (8080 is Spark's) |
+| `api` | built from `docker/api.Dockerfile` | 8000 |
+
+Development runs Spark in local mode from `.venv`. The cluster exists so the pipeline can run
+unchanged against `spark://spark-master:7077`. `data/` is bind-mounted, never copied into an image
+(`.dockerignore` excludes it).
+
+**Airflow login.** Copy `.env.example` to `.env` (git-ignored) and set a password. `make up` and
+`docker compose` refuse to start without it; there is no default password. `airflow standalone`
+ignores the usual `_AIRFLOW_WWW_USER_*` variables and makes up a random password, so the service
+creates the `.env` user itself before starting, and recreates it on every start so `.env` always
+wins. The SQLite DB lives in `airflow/db/` on the bind mount, so it survives container rebuilds.
+The REST API accepts basic auth (`curl -u user:pass localhost:8081/api/v1/dags`) so Phase 8
+scripts can trigger DAG runs.
+
+### 0.8 CI
+
+`.github/workflows/ci.yml` runs on every push and PR: Python 3.11, Temurin Java 17, CPU-only torch
+(skips the multi-GB CUDA wheels), fixture freshness check, then `pytest`. The real dataset is
+never downloaded in CI.
+
+**Done when:** `make data` reproduces `data/ml-25m/` from scratch with 25,000,096 lines in
+`ratings.csv`, `git status` shows nothing under `data/`, and `make test` passes.
 
 **Edge cases**
 - `git status` must show no `data/` files. If it does, your `.gitignore` came too late — fix before committing.
-- Re-running the script should not re-download silently into a corrupt file; compare the checksum.
 - Files you'll use: `ratings.csv` (userId, movieId, rating, timestamp), `movies.csv`, `genome-scores.csv`, `genome-tags.csv`.
+- Spark startup is about 5 s before any work. Phase 9 times it separately.
 
 ---
 

@@ -1,0 +1,7 @@
+data/
+.venv/
+.git/
+models/
+airflow/
+results/
+**/__pycache__

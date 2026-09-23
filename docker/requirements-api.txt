@@ -1,0 +1,4 @@
+# Serving only: kept small so the API image stays light. Grows in Phase 7.
+fastapi
+uvicorn[standard]
+numpy<2

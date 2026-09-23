@@ -1,0 +1,19 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu   # CPU torch, skips CUDA wheels
+      - name: fixture is up to date
+        run: python scripts/make_fixture.py && git diff --exit-code tests/fixtures
+      - run: pytest -q   # fixture only; the real dataset is never downloaded in CI

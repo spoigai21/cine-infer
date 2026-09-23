@@ -1,0 +1,16 @@
+# Python 3.11. Spark 3.5 needs Java 8, 11 or 17 (not 21) — see Makefile JAVA_HOME.
+pyspark==3.5.*
+numpy<2            # pyspark 3.5 MLlib is not fully numpy-2 compatible
+pandas==2.2.*
+pyarrow>=15,<18
+scipy
+scikit-learn
+torch
+polars
+duckdb
+fastapi
+uvicorn[standard]
+httpx              # FastAPI TestClient
+matplotlib
+tqdm
+pytest

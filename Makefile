@@ -1,0 +1,60 @@
+SHELL := /bin/bash
+PYTHON ?= python3.11
+VENV   := .venv
+PY     := $(VENV)/bin/python
+
+# Spark 3.5 supports Java 8/11/17, not 21. Prefer a native arm64 JDK 17, then x86_64 ones (Rosetta).
+# A JAVA_HOME from your shell (e.g. SDKMAN's Java 21) is deliberately ignored; override with
+# `make SPARK_JAVA_HOME=/path/to/jdk <target>`.
+JAVA_CANDIDATES := /opt/homebrew/opt/openjdk@17 $(HOME)/.sdkman/candidates/java/17.0.5-tem \
+                   /usr/local/opt/openjdk@17 /usr/local/opt/openjdk@11
+SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
+export JAVA_HOME := $(SPARK_JAVA_HOME)
+export PATH := $(JAVA_HOME)/bin:$(PATH)
+
+.PHONY: help install check-java data fixture test up down clean
+
+help:
+	@echo "make install     create .venv and install requirements"
+	@echo "make check-java  confirm Spark can start with the selected JDK"
+	@echo "make data        download + verify MovieLens 25M into data/ (never committed)"
+	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
+	@echo "make test        run pytest on the fixture"
+	@echo "make up / down   start / stop the Docker Compose stack (Spark, Airflow, API)"
+	@echo "make clean       remove caches and derived data (keeps the downloaded zip)"
+
+$(VENV)/.installed: requirements.txt
+	$(PYTHON) -m venv $(VENV)
+	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install -r requirements.txt
+	touch $@
+
+install: $(VENV)/.installed
+
+check-java: install
+	@test -n "$(JAVA_HOME)" || { echo "No JDK 11/17 found. Install one: brew install openjdk@17"; exit 1; }
+	@echo "JAVA_HOME=$(JAVA_HOME)"
+	@java -version 2>&1 | head -1
+	$(PY) -c "from pyspark.sql import SparkSession; \
+	s = SparkSession.builder.master('local[1]').appName('check').getOrCreate(); \
+	print('Spark', s.version, 'OK, rows =', s.range(10).count()); s.stop()"
+
+data:
+	bash scripts/get_data.sh
+
+fixture: install
+	$(PY) scripts/make_fixture.py
+
+test: install
+	$(PY) -m pytest -q
+
+up:
+	@test -f .env || { echo "Missing .env: cp .env.example .env and set a password"; exit 1; }
+	docker compose up -d --build
+
+down:
+	docker compose down
+
+clean:
+	rm -rf .pytest_cache spark-warehouse metastore_db derby.log data/ml-25m data/splits_*
+	find . -name __pycache__ -type d -prune -exec rm -rf {} +
