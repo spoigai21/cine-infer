@@ -153,6 +153,30 @@ never downloaded in CI.
 
 This is the phase that decides whether your results mean anything. Slow down here.
 
+**Status: built and verified.** `make prep` runs `src/data_prep.py` on the full data in about
+100 s. All four "done when" checks pass: the split checks run on the real data every time, and
+re-running produces a byte-identical `results/data_stats.csv`. `tests/test_data_prep.py`
+(17 tests) compares every step against an independent pandas implementation on the fixture. The
+snippets below are the original sketches; the code differs from them where noted here:
+
+- **Output layout.** One table, `data/splits.parquet`, with one row per rating and one column per
+  scheme: `split_user`, `train_part` (`core`/`tail`, only for train rows), `split_global`,
+  `split_random`. Features go to `data/features/{train_core,train,train_val}/` as
+  `items.parquet`, `users.parquet` and `user_genres.parquet` (long format: userId, genre, share),
+  plus `data/features/genome.parquet` (movieId → 1,128 relevances ordered by tagId).
+- **Cut points use integer arithmetic,** `(n * 8) div 10`, not `floor(n * 0.8)`. Floating-point
+  error makes the latter off by one for some `n`.
+- **Global cutoffs are exact percentiles** (Spark SQL `percentile`), not `approxQuantile`, so
+  they're deterministic. They're still written to `data_stats.csv`.
+- **The random split hashes `(seed, userId, movieId)`** instead of using `F.rand(seed)`, which
+  changes with the partition layout and so with the machine's core count.
+- **Extra statistics:** how close each user's train/val boundary falls in time, and how many
+  movies appear only in val/test (cold items).
+- **All three splits report eligible users** (≥1 train positive) and how many of them have a
+  positive in val and in test. That's the population each metric is averaged over.
+- **Tag genome caveat:** GroupLens computed it in 2019 from all the data, so it carries some
+  post-cutoff information. It's item content and is used as-is, and this is listed as a limitation.
+
 ### 1.1 Start Spark (local mode)
 
 ```python
@@ -203,8 +227,8 @@ rand = ratings.withColumn("u", F.rand(seed=42)).withColumn("split",
         F.when(F.col("u") < 0.8, "train").when(F.col("u") < 0.9, "val").otherwise("test"))
 ```
 
-Write `t80` and `t90` into `results/data_stats.csv` so the global split can be rebuilt exactly
-(`approxQuantile` is approximate; don't recompute it on every run).
+Write `t80` and `t90` into `results/data_stats.csv` so the global split can be rebuilt exactly.
+(As built: exact percentiles instead of `approxQuantile`, so recomputing gives the same cutoffs.)
 
 **Cold-start users in the global split.** Anyone whose first rating is after `t80` has no train
 data, and anyone whose first rating is after `t90` has neither train nor val data. Rule, applied to **all three

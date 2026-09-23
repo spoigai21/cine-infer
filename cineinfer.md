@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** plan only. Nothing is built yet.
+**Status:** Phases 0–1 built and verified (setup, data splits, features). Phases 2–11 not started.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
@@ -185,3 +185,8 @@ Rent a GPU only if a phase proves it's needed, and record the cost.
 - No cold-start users exist in this dataset; the cold-start path is designed but untested on real traffic.
 - EASE runs on an item subset (items with ≥20 train ratings) because the full item×item matrix is too large.
 - Results are specific to MovieLens; they do not automatically transfer to other domains.
+- The tag genome was computed by GroupLens in 2019 from the full dataset, so ranker item features
+  carry some information from after each user's train cutoff.
+- Under the per-user split, most users' validation and test ratings come from the same rating
+  session as the end of their training data (measured in `results/data_stats.csv`), so
+  "predicting the future" is often "predicting the rest of one sitting".
