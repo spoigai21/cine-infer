@@ -298,6 +298,45 @@ at evaluation; see Phase 2.)
 
 ## Phase 2 — Evaluation harness (write this before any model)
 
+**Status: built and verified.** The harness lives in `src/evaluate.py`. `tests/test_evaluate.py`
+(27 tests) checks it against hand-computed values on a toy example, and `make eval-check` runs it
+on the real data. There, an oracle model must score exactly 1.0 on recall, NDCG and AUC, a random
+model must land at chance, and the evaluated populations must match `results/data_stats.csv`.
+The snippet below is the original sketch. The built harness settles these points:
+
+- **One catalog, one index.** `ItemIndex` maps all 62,423 movies, sorted by `movieId`, to column
+  indices. Every model scores the full catalog. A movie a model can't score gets `-inf`. That
+  covers movies with no training data and movies below EASE's item cutoff.
+- **One population, enforced.** `EvalData` fixes the users once: ≥1 positive in train **and** ≥1
+  positive in the target slice. That's 151,597 users for val and 153,995 for test, matching
+  `data_stats.csv`. A model can't shrink the population. If it returns `-inf` for every movie, the
+  user scores 0 rather than being skipped. `skipped_all_seen` only counts users who have already
+  rated every movie in the catalog.
+- **Batched interface.** Models implement `score(user_ids) -> (B, n_items)` rather than scoring one
+  user at a time. The harness copies the scores in C order, masks seen items with `-inf`, rejects
+  NaN/`+inf`, and takes a tie-safe top-k. The exact answer is the items strictly above the row's
+  k-th score, ordered by `(-score, index)`, followed by items tied at that score in index order.
+  `torch.topk` over a window of k + 64 finds the k-th score and every strictly-better item. Rows
+  whose tie group fits in the window are solved there in one vectorized lexsort. Rows with huge
+  tie groups (a model that scores most movies 0) take the lowest-index tied items with one linear
+  scan, never a sort over all ties. On 20k users this takes ~2 s for a popularity model and ~3.5 s
+  for the oracle; the first vectorized version stalled for 30+ minutes on the oracle's ties.
+- **AUC negatives are fixed.** Once per scheme and slice, with a fixed seed, sample 100 distinct
+  movies per user. They come from movies with ≥1 rating in the training data, and exclude
+  anything the user rated in any slice. Every model gets the same negatives. Ties count 0.5,
+  including `-inf` vs `-inf`.
+- **Coverage follows the training data.** The denominator is the number of movies with ≥1 rating in
+  the model's training data: 51,195 when scoring val (train), 55,119 when scoring test (train +
+  val). Recommended movies outside that set don't count.
+- **Two-stage models use the same interface.** The ranker (Phase 6) gives its ~200 candidates
+  ranker scores and everything else `-inf`, so non-candidates rank below every candidate.
+- **Tuning subsample.** `EvalData.subsample(n, seed)` gives a fixed random subset of users for
+  fast tuning (a few seconds for 20k users). Numbers that get reported always use the full population.
+- **Recording runs.** `result_row` / `append_results` write one CSV row per run: model, scheme,
+  slice, seed, metrics, population counts and the JSON config. `save_per_user` keeps per-user
+  metrics (git-ignored parquet). `paired_bootstrap` gives a 95% CI for the difference between two
+  models on the same users, and `summarize_seeds` reports the median and min/max across seeds.
+
 ```python
 def top_k(scores, k):
     """Top-k item indices, ordered by (-score, item_id). Deterministic under ties."""
