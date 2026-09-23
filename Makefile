@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -20,6 +20,7 @@ help:
 	@echo "make data        download + verify MovieLens 25M into data/ (never committed)"
 	@echo "make prep        Phase 1: splits, burst stats, features -> data/, results/data_stats.csv"
 	@echo "make eval-check  Phase 2: run the harness on real data with oracle + random models"
+	@echo "make baselines   Phase 3: tune the 4 baselines on validation -> results/baselines.csv"
 	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
 	@echo "make test        run pytest on the fixture"
 	@echo "make up / down   start / stop the Docker Compose stack (Spark, Airflow, API)"
@@ -49,6 +50,9 @@ prep: install
 
 eval-check: install
 	$(PY) -u -m scripts.check_harness
+
+baselines: install
+	$(PY) -u -m src.tune_baselines $(ARGS)
 
 fixture: install
 	$(PY) scripts/make_fixture.py

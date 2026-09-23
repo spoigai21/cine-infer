@@ -347,18 +347,32 @@ def result_row(model: str, seed: int, config: dict, result: EvalResult, data: Ev
             "config": json.dumps(config, sort_keys=True)}
 
 
-def append_results(rows: list[dict], path) -> None:
+def append_results(rows: list[dict], path, columns=RESULT_COLUMNS) -> None:
     """Append run summaries to a results CSV (created with a header if missing)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=RESULT_COLUMNS, lineterminator="\n")
+        w = csv.DictWriter(f, fieldnames=columns, lineterminator="\n")
         if new:
             w.writeheader()
         for r in rows:
-            w.writerow({c: (f"{r[c]:.6f}" if isinstance(r[c], float) else r[c])
-                        for c in RESULT_COLUMNS})
+            w.writerow({c: _fmt(r.get(c)) for c in columns})
+
+
+def replace_model_rows(rows: list[dict], path, model: str, columns=RESULT_COLUMNS) -> None:
+    """Rewrite a results CSV with this model's old rows replaced by `rows` (re-runs don't pile up)."""
+    path = Path(path)
+    keep = []
+    if path.exists():
+        with open(path, newline="") as f:
+            keep = [r for r in csv.DictReader(f) if r["model"] != model]
+        path.unlink()
+    append_results(keep + rows, path, columns)
+
+
+def _fmt(v):
+    return f"{v:.6f}" if isinstance(v, float) else v
 
 
 def save_per_user(result: EvalResult, path) -> None:

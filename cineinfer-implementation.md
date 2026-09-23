@@ -415,6 +415,36 @@ the protocol used in the iALS re-evaluation (Rendle et al.).
 
 ## Phase 3 — Baselines (tuned, not token)
 
+**Status: built and tuned on validation.** The models are in `src/baselines.py` and the tuning
+runner in `src/tune_baselines.py` (`make baselines`, or `make baselines ARGS="--models ease"`).
+`tests/test_baselines.py` (13 tests) checks each model against an independent brute-force version
+on the fixture. EASE is compared column by column with the ridge solution it's supposed to equal.
+One test confirms ALS really runs with `implicitPrefs=True` on positives only (mistake #4 below).
+As built:
+
+- **Same input for every model:** the binary train-positives matrix over all users and the full
+  catalog (§1.6). Most-popular counts positives, not all ratings.
+- **Tuning protocol:** every config is scored on a fixed, seeded 20k-user subsample of the
+  validation population and selected by NDCG@10. If the winner sits on a grid edge, the grid
+  extends (up to 4 steps), so no model is cut off just short of its best setting. The winner is
+  then scored on the full validation population (151,597 users). Only ALS is seeded, so it's refit
+  with seeds 42/43/44. **The test slice is not read in Phase 3.** Test numbers come from one final
+  run of every model with train + val refits (§2.1).
+- **Searches:** item-kNN runs coordinate descent over k and shrinkage. EASE searches λ at movie
+  cutoffs of ≥20 and ≥10 train positives (10,607 and 13,338 movies); both cutoffs scored within
+  0.0001 NDCG, and the chosen one is recorded in the config. ALS runs coordinate descent over reg
+  and alpha at rank 64, then rank ∈ {32, 64, 128, 256}, then a final reg check at the best
+  (rank, alpha).
+- **ALS rank is capped at 256 by compute budget.** NDCG was still rising from 128 to 256, and one
+  rank-256 fit takes ~22 min on 6 Spark cores. This goes in the write-up as a limitation.
+- **Records:** `results/baselines.csv` holds each winner's full-validation metrics, config, the
+  subsample score that chose it, the trial count and the tuning budget (the sum of trial fit +
+  eval time). `results/tuning/baselines_trials.csv` logs every trial, with a `source` column.
+  Per-user metrics go to `data/eval_runs/` (git-ignored) for paired bootstrap comparisons.
+- **Resumable:** each trial is written as soon as it finishes, and a re-run skips logged configs.
+  Sixteen ALS trials were recovered from the progress log after an interruption; they're marked
+  `recovered_from_log`. Spark uses 6 of 10 cores (`--spark-cores`) to keep the laptop cooler.
+
 All four are scored the same way, ranking against the full catalog.
 
 ### 3.1 Most popular

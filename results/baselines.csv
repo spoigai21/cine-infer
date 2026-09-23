@@ -1,0 +1,7 @@
+model,scheme,slice,seed,recall@10,ndcg@10,auc,coverage,n_items_recommended,coverage_denominator,n_users,skipped_all_seen,excluded_no_train_positive,excluded_no_target_positive,subsample,config,selection_metric,selection_value_tune_subsample,n_trials,tuning_seconds
+most_popular,user,val,0,0.066390,0.052754,0.978755,0.005567,285,51195,151597,0,336,10608,,{},ndcg@10,0.052711,1,1.800000
+item_knn,user,val,0,0.124793,0.097639,0.985530,0.078680,4028,51195,151597,0,336,10608,,"{""k"": 200, ""min_pos"": 20, ""shrink"": 0.0}",ndcg@10,0.098902,8,41.500000
+ease,user,val,0,0.153184,0.119264,0.978503,0.057877,2963,51195,151597,0,336,10608,,"{""lam"": 1000.0, ""min_pos"": 20}",ndcg@10,0.120377,12,240.700000
+implicit_als,user,val,42,0.146976,0.115254,0.948594,0.053521,2740,51195,151597,0,336,10608,,"{""alpha"": 1.0, ""max_iter"": 15, ""rank"": 256, ""reg"": 0.1}",ndcg@10,0.115923,19,5019.200000
+implicit_als,user,val,43,0.147404,0.115331,0.948445,0.053286,2728,51195,151597,0,336,10608,,"{""alpha"": 1.0, ""max_iter"": 15, ""rank"": 256, ""reg"": 0.1}",ndcg@10,0.115923,19,5019.200000
+implicit_als,user,val,44,0.146708,0.115031,0.948439,0.053286,2728,51195,151597,0,336,10608,,"{""alpha"": 1.0, ""max_iter"": 15, ""rank"": 256, ""reg"": 0.1}",ndcg@10,0.115923,19,5019.200000
