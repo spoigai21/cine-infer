@@ -499,14 +499,31 @@ each with its tuned hyperparameters and the validation score that chose them.
 
 ## Phase 4 — Commit predictions
 
-Fill in the blanks in `cineinfer.md` §4 using the baseline numbers, then:
+**Status: written; committing is your step.** The predictions are in `cineinfer.md` §4 and
+`results/predictions.csv`. They're based on the validation results in `results/baselines.csv`.
+Each prediction fixes:
+
+- **what settles it:** test slice, per-user split, train + val refits, median of 3 seeds
+- **the reference baseline:** EASE, which validation picked over ALS with a significant margin
+- **a numeric range and a stated "refuted if" condition**, so none can be confirmed after the fact
+  on whichever slice happens to agree
+
+Then:
 
 ```bash
-git add cineinfer.md && git commit -m "Predictions before neural training"
+git add cineinfer.md results/predictions.csv
+git commit -m "Predictions before neural training"
+git tag predictions
+git push && git push origin predictions
 ```
 
-**Done when:** `git log` shows this commit **before** any two-tower training commit. That timestamp
-is the entire point.
+**Done when:** the tagged predictions commit is **pushed** before any two-tower code exists or is
+run. GitHub's push record is the independent timestamp; a local commit date can be set to anything.
+
+**Rules that go with it**
+- No exploratory two-tower runs before the push, committed or not.
+- The predictions are never edited afterwards. If one turns out to be badly specified, say so in the
+  write-up next to the original text.
 
 ---
 

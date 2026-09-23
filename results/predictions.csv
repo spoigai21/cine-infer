@@ -1,0 +1,8 @@
+id,settled_in_phase,metric,slice,scheme,check,prediction
+1,5,ndcg@10,test,user,ndcg@10[two_tower] >= 1.5 * ndcg@10[most_popular],Two-tower beats most-popular on NDCG@10 by at least 50% (relative).
+2,5,recall@10,test,user,"not significant_gt(recall@10, two_tower, ease) and (recall@10[ease] - recall@10[two_tower]) / recall@10[ease] <= 0.10",EASE matches or beats two-tower on Recall@10; two-tower within 10% of EASE.
+3,6,ndcg@10,test,user,"-0.01 <= (ndcg@10[two_stage] - ndcg@10[two_tower]) / ndcg@10[two_tower] <= 0.05 or (ndcg@10[two_stage] < 0.99 * ndcg@10[two_tower] and not significant_lt(ndcg@10, two_stage, two_tower))",Ranking stage changes NDCG@10 over retrieval alone by -1% to +5% (relative); refuted if > +5% or significantly below -1%.
+4,"5,6",coverage,test,user,coverage[most_popular] < min(coverage[m] for m in all_models if m != most_popular),Most-popular has the lowest catalog coverage of all models.
+5,9,seconds,-,-,"all(pandas[n] < spark[n] for n in (1e6, 5e6, 25e6) for timing in (with_startup, compute_only))","pandas beats PySpark on the Phase 1 feature pipeline at 1M, 5M and 25M rows, with and without Spark startup: no crossover."
+6,7,latency_ms,-,-,p99_ms < 25 and p50_ms < 10,"Serving p99 < 25 ms and p50 < 10 ms for top-10 (two-tower + ranker, 1,000 sequential HTTP requests after 50 warm-up)."
+7,10,ndcg@10,test,"user,global,random",ndcg@10[ease@random] >= 1.5 * ndcg@10[ease@global] and ndcg@10[ease@random] > ndcg@10[ease@user] > ndcg@10[ease@global],Random split overstates NDCG@10 vs the global cutoff by at least 50%; ordering random > per-user > global (EASE).

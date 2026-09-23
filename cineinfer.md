@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** Phases 0–3 built and verified (setup, data splits, features, evaluation harness, tuned baselines on validation). Phases 4–11 not started.
+**Status:** Phases 0–4 done (setup, data splits, features, evaluation harness, tuned baselines on validation, predictions written). Phases 5–11 not started.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
@@ -121,20 +121,73 @@ items, full-catalog scoring is cheap.
 
 ## 4. Predictions to commit to git before training
 
-Written down and committed first, then confirmed or refuted in the write-up. Fill in numeric ranges
-after the baselines run, **before** the neural models train.
+Written down and committed first, then confirmed or refuted in the write-up. Filled in on
+2026-09-23 from the **validation** results of the tuned baselines (`results/baselines.csv`),
+**before any two-tower code is written or run**. A machine-readable copy lives in
+`results/predictions.csv`. Its `check` column states each prediction as a formal condition over
+result files (pseudo-code for now). Phase 10's write-up script evaluates it and marks each
+prediction confirmed or refuted.
 
-1. The two-tower model beats most-popular on NDCG@10.
-2. **The best tuned baseline (EASE or implicit ALS) lands within ___% of the two-tower model on
-   Recall@10.** Re-evaluations (Dacrema et al. 2019; Rendle et al. on iALS) found well-tuned simple
-   models often match or beat neural ones on MovieLens. An honest "the neural model barely helped"
-   is a real result, and tuning the baselines properly is what makes it credible.
-3. Adding the ranking stage improves NDCG@10 over retrieval alone by ___ (may be small: MovieLens
-   has few rich features, so the tag genome carries this stage).
-4. Most-popular has the lowest catalog coverage of all models.
-5. pandas beats PySpark on the feature pipeline below ___M rows; Spark wins above it.
-6. Serving p99 latency stays under ___ ms for top-10 on a laptop CPU.
-7. The random split overstates NDCG@10 versus the global time cutoff by ___%.
+**What settles every prediction (unless the prediction says otherwise):**
+
+- **Metrics:** Phase 2 harness definitions. NDCG@10, Recall@10 (capped), coverage over movies with
+  ≥1 rating in the training data.
+- **Data:** the **test** slice of the per-user split, with every model retrained on train + val
+  under its frozen validation-chosen config (§2.1).
+- **Seeds:** for seeded models, the **median over 3 seeds**.
+- **"Beats" / "significant":** the paired bootstrap 95% CI of the per-user difference excludes 0.
+  "Within X%" is relative: (A − B) / B.
+- **Reference baseline:** **EASE**. Validation already picked it as the best tuned baseline: it
+  beat implicit ALS on NDCG@10 by +0.004 (95% CI [+0.003, +0.005]) for all three ALS seeds.
+
+**Validation numbers these are based on:**
+
+| Baseline | NDCG@10 | Recall@10 | Coverage |
+|---|---|---|---|
+| EASE | 0.1193 | 0.1532 | 5.8% |
+| Implicit ALS (median of 3 seeds) | 0.1153 | 0.1470 | 5.3% |
+| Item-kNN | 0.0976 | 0.1248 | 7.9% |
+| Most-popular | 0.0528 | 0.0664 | 0.6% |
+
+**Predictions:**
+
+1. **The two-tower model beats most-popular on NDCG@10 by at least 50%** (relative).
+   *Refuted if* two-tower NDCG@10 < 1.5 × most-popular's. (Every tuned baseline already clears
+   1.8× on validation. This is a sanity floor, not a bold claim.)
+2. **EASE matches or beats the two-tower model on Recall@10, and the two-tower model lands within
+   10% of EASE.** Expected: (EASE − two-tower) / EASE is between 0% and 10%. *Refuted if* the
+   two-tower model significantly beats EASE, or falls more than 10% below it. Re-evaluations
+   (Dacrema et al. 2019; Rendle et al. on iALS) found well-tuned simple models often match or beat
+   neural ones on MovieLens. A mean-pooled history tower sees what EASE sees, with less capacity to
+   model item-item interactions. An honest "the neural model barely helped" is a real result, and
+   tuning the baselines properly is what makes it credible.
+3. **Adding the ranking stage changes NDCG@10 over retrieval alone by −1% to +5%** (relative).
+   *Refuted if* the gain is above +5%, or the two-stage system is more than 1% below retrieval
+   alone **and** significantly worse than it. The gain may not be significant
+   at all: MovieLens has few rich features, the tag genome covers only 13,816 movies, and
+   `train_tail` labels are thin.
+4. **Most-popular has the lowest catalog coverage of all models**, including the two-tower model and
+   the two-stage system. *Refuted if* any model covers less than most-popular. (Already true
+   among the baselines on validation: 0.6% vs ≥5.3%. Only the neural models are open.)
+5. **pandas beats PySpark on the Phase 1 feature pipeline at 1M, 5M and 25M rows, both with and
+   without Spark's startup cost: no crossover in the measured range.** Settled by the Phase 9
+   benchmark on this laptop (local mode, 6 cores). *Refuted if* Spark is faster at any measured
+   size in either timing. Reasoning: 25M rows fit in memory here, and local-mode Spark pays for
+   shuffle and serialization that pandas doesn't.
+6. **Serving p99 latency stays under 25 ms, and p50 under 10 ms, for top-10**, with two-tower
+   retrieval (brute-force dot product over all 62,423 movies) plus the ranker over 200 candidates.
+   Measured as 1,000 sequential HTTP requests to uvicorn on localhost, after 50 warm-up requests,
+   laptop plugged in. *Refuted if* either number is exceeded.
+7. **The random split overstates NDCG@10 versus the global time cutoff by at least 50%**
+   (random ≥ 1.5 × global), with ordering **random > per-user > global cutoff**. Measured with
+   EASE at its per-user-tuned config on each split's test slice. *Refuted if* random < 1.5 ×
+   global, or the ordering differs. Caveat: the global-cutoff test population is small (3,992
+   users) and different, so the comparison is reported with unpaired bootstrap CIs.
+
+**Commit protocol:** commit `cineinfer.md` and `results/predictions.csv` together, tag the commit
+`predictions`, and **push it**. GitHub's push record is independent evidence of when the
+predictions existed; a local commit date can be set to anything. No exploratory two-tower runs
+happen before this commit, committed or not.
 
 ---
 
