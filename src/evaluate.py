@@ -108,12 +108,20 @@ class EvalData:
                         self.train_items, {**self.counts, "subsample": n, "subsample_seed": seed})
 
 
-def load_ratings(splits_path, scheme: str) -> pd.DataFrame:
+def load_ratings(splits_path, scheme: str, fine: bool = False) -> pd.DataFrame:
+    """userId, movieId, rating, split. With fine=True (per-user scheme only), train rows are
+    labelled train_core / train_tail instead of train (the ranker's label slice, §1.3a)."""
     col = f"split_{scheme}"
-    t = pq.read_table(splits_path, columns=["userId", "movieId", "rating", col],
-                      read_dictionary=[col])
-    df = t.to_pandas()
-    return df.rename(columns={col: "split"})
+    cols = ["userId", "movieId", "rating", col] + (["train_part"] if fine else [])
+    df = pq.read_table(splits_path, columns=cols, read_dictionary=[col]).to_pandas()
+    df = df.rename(columns={col: "split"})
+    if fine:
+        if scheme != "user":
+            raise ValueError("train_core / train_tail exist only in the per-user split")
+        split = df["split"].astype(str)
+        split = split.where(split != "train", "train_" + df["train_part"].astype(str))
+        df = df.drop(columns="train_part").assign(split=split.astype("category"))
+    return df
 
 
 def build_eval_data(ratings: pd.DataFrame, items: ItemIndex, scheme: str, slice_: str,

@@ -6,6 +6,7 @@ pyarrow>=15,<18
 scipy
 scikit-learn
 torch
+lightgbm>=4.5,<5  # Phase 6 ranker; macOS needs `brew install libomp`
 polars
 duckdb
 fastapi

@@ -81,7 +81,9 @@ class Tuner:
         row = {"model": self.name, "trial": len(self.trials) + 1, "config": key,
                **{m: s[m] for m in ("ndcg@10", "recall@10", "auc", "coverage", "n_users")},
                "fit_seconds": round(fit_s, 1), "eval_seconds": round(eval_s, 1),
-               "source": "run", "epochs": getattr(model, "config", {}).get("epochs")}
+               "source": "run"}
+        # any extra log columns (two-tower "epochs", ranker "rounds") come from the model config
+        row.update({c: getattr(model, "config", {}).get(c) for c in self.columns if c not in row})
         self.trials.append(row)
         ev.replace_model_rows(self.trials, self.trials_csv, self.name, self.columns)
         print(f"  [{self.name} #{row['trial']}] {key}  ndcg={s['ndcg@10']:.5f} "

@@ -71,11 +71,16 @@ class Sequences:
 
 
 def load_sequences(splits_path, items: ItemIndex, training=("train",), scheme="user") -> Sequences:
+    """training: slice names; "train_core" / "train_tail" select parts of train (§1.3a)."""
     col = f"split_{scheme}"
-    t = pq.read_table(splits_path, columns=["userId", "movieId", "rating", "timestamp", col],
-                      read_dictionary=[col]).to_pandas()
+    fine = any(n.startswith("train_") for n in training)
+    cols = ["userId", "movieId", "rating", "timestamp", col] + (["train_part"] if fine else [])
+    t = pq.read_table(splits_path, columns=cols, read_dictionary=[col]).to_pandas()
     user_ids = np.unique(t["userId"].to_numpy())
-    t = t[t[col].isin(training) & (t["rating"] >= POSITIVE_THRESHOLD)]
+    label = t[col].astype(str)
+    if fine:
+        label = label.where(label != "train", "train_" + t["train_part"].astype(str))
+    t = t[label.isin(training).to_numpy() & (t["rating"] >= POSITIVE_THRESHOLD).to_numpy()]
     t = t.sort_values(["userId", "timestamp", "movieId"], kind="stable")
     rows = np.searchsorted(user_ids, t["userId"].to_numpy())
     counts = np.bincount(rows, minlength=len(user_ids))

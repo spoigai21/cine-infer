@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** Phases 0–5 done (setup, data splits, features, evaluation harness, tuned baselines, predictions, tuned two-tower model; all on validation). Phases 6–11 not started.
+**Status:** Phases 0–6 done on validation (setup, data splits, features, evaluation harness, tuned baselines, predictions, two-tower model, two-stage ranker). Next: 6b (the one-time test run). Phases 7–11 not started.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
@@ -253,3 +253,10 @@ Rent a GPU only if a phase proves it's needed, and record the cost.
   ratings closes just ~9% of the gap, so the gain comes from learned next-item structure, not
   from the input window alone.
 - The two-tower embedding dimension is capped at 256 by compute budget (gains had flattened).
+- The ranker's time features (a movie's first/last rating by anyone, relative to the user's
+  cutoff) can use other users' ratings from after that cutoff, so they're excluded from the
+  headline two-stage system and reported only as an ablation (+0.0045 NDCG@10 on validation).
+- The headline ranker uses EASE's score and rank as features, added after the predictions were
+  committed, so it is partly a blend with the reference baseline. Prediction #3 is settled on the
+  ranker without them (`two_stage_no_ease`). Item time features were dropped from the ranker
+  because, under the per-user split, they carry other users' post-cutoff activity.

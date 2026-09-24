@@ -3,9 +3,10 @@
 Step-by-step build instructions for the plan in `cineinfer.md`. Each step has: what you're doing,
 the commands, a code sketch, **how you know it worked**, and the edge cases that bite here.
 
-> **Status of the code below:** Phase 0 is built and verified; its section describes the actual repo.
-> From Phase 1 on, snippets are starting points written from the plan, **not yet executed**.
-> Treat every snippet as a draft to verify, and trust the "how you know it worked" checks over the code.
+> **Status of the code below:** Phases 0–5 are built and verified, and Phase 6 is built and running
+> on validation. Each built phase opens with a "Status" note describing the actual repo; the
+> snippets after it are the original sketches, and the code differs from them where the note says.
+> From Phase 7 on, snippets are starting points written from the plan, **not yet executed**.
 
 **Golden rules for the whole project**
 
@@ -60,12 +61,18 @@ cine-infer/
     evaluate.py             # Phase 2: metrics, full-catalog ranking
     baselines.py            # Phase 3: popular, item-kNN, ALS, EASE
     two_tower.py            # Phase 5: PyTorch retrieval model
-    ranker.py               # Phase 6: second-stage model
+    tune_baselines.py       # Phase 3: tuning runner (Tuner, shared by later phases)
+    tune_two_tower.py       # Phase 5: tuning runner
+    ranker.py               # Phase 6: candidates + features (PyTorch side)
+    lgb_ranker.py           # Phase 6: LightGBM ranker, run in its own process
+    tune_ranker.py          # Phase 6: two-stage runner + ablations
     serve.py                # FastAPI (Phase 0: /health only; /recommend in Phase 7)
   scripts/
     get_data.sh             # download + verify MovieLens 25M
     ml-25m.zip.sha256       # recorded checksum (committed; the data is not)
     make_fixture.py         # generates the synthetic test fixture
+    check_harness.py        # Phase 2: oracle/random sanity run on real data
+    boundary_breakdown.py   # Phase 5+: validation metrics by train/val boundary type
   tests/
     fixtures/tiny_ratings.csv, tiny_movies.csv   # synthetic, 200 ratings, committed
     test_setup.py           # Phase 0 checks
@@ -76,7 +83,7 @@ cine-infer/
   docker-compose.yml, Makefile, requirements.txt, pytest.ini, .env.example
 ```
 
-Only `src/serve.py` exists so far; the other `src/` modules arrive in their phases.
+`src/serve.py` is still the Phase 0 stub (`/health` only); `/recommend` arrives in Phase 7.
 
 ### 0.4 .gitignore
 
@@ -636,7 +643,73 @@ mention it.
 
 ## Phase 6 — Ranker
 
-Take the top ~200 candidates from the two-tower model, then re-score with richer features: tag
+**Status: built and evaluated on validation** (`results/ablation.csv`; median of 3 seeds: retrieval
+only 0.1531 → headline two-stage 0.1784 NDCG@10, +0.025 with 95% CI [+0.025, +0.026]). The PyTorch side is in `src/ranker.py` (candidates,
+features, file hand-off, `PrecomputedScorer`). The LightGBM process is `src/lgb_ranker.py`. The
+runner is `src/tune_ranker.py` (`make ranker`, resumable). `tests/test_ranker.py` checks that:
+- candidates mask everything rated in the training set, and equal the retriever's top-k;
+- every feature matches an independent calculation from the right training set;
+- labels come from the label slice, and users without signal are dropped and counted;
+- an "identity ranker" (retriever score in, retriever score out) reproduces retrieval-only
+  metrics exactly, so the plumbing changes nothing by itself;
+- LightGBM runs in its own process and never loads torch.
+
+Decisions beyond the sketch below:
+
+- **LightGBM LambdaRank, in a separate process.** On macOS, PyTorch and LightGBM each bring
+  their own OpenMP runtime. In one process, LightGBM's multithreaded training segfaults (the
+  "Python quit unexpectedly" dialogs). Features are written to `data/ranker/` (git-ignored), and
+  LightGBM trains and predicts in `python -m src.lgb_ranker`, which never imports torch. Needs
+  `brew install libomp` on macOS.
+- **K = 200 candidates, fixed**, because prediction #6 was committed for "the ranker over 200
+  candidates". The recall ceiling at 50/100/200/500 is reported instead.
+- **Features** (17, all from one training set): the retriever's score and rank; **EASE's score
+  and rank** (EASE refit on the same set); Phase 1 item and user stats; item recency relative to
+  the user's last rating; genre overlap; tag-genome cosine to the user's all-history and last-10
+  profiles; a genome-present flag (only 13,816 movies have one).
+- **The EASE features were added after the predictions were committed.** The Phase 5 boundary
+  analysis showed the two-tower model wins within sessions and EASE wins across gaps, so a ranker
+  that sees both could learn when to trust each. The headline ranker without them runs as an
+  ablation (`two_stage_no_ease`), so the write-up can show what they contribute, next to
+  prediction #3. Result: they carry ~70% of the ranker's gain (0.1605 without vs 0.1784 with),
+  and the two-stage system beats EASE even for users with >1 h between train and validation,
+  where the two-tower alone lost to it (`results/analysis/val_by_boundary.csv`).
+- **Time features are left out of the headline ranker** (decision after measurement).
+  `item_days_since_last` and `item_age_days` compare the user's last training rating with a
+  movie's first/last rating by *anyone* in the training set. Under the per-user split, that set
+  includes other users' ratings from after this user's cutoff (§3), so these features can signal
+  "still being rated after your cutoff" or "released around your cutoff", which a live system
+  wouldn't know. With the same config and rounds, adding them back gives +0.0045 NDCG@10 (about
+  15% of that variant's gain over retrieval). The headline `two_stage` uses the other 15 features
+  and was **re-tuned on them**. The time-feature version stays as the ablation `two_stage_with_time`, and its original
+  tuning trials are kept in the trial log under that name. A principled alternative for later:
+  "point-in-time" item features computed only from ratings before each user's cutoff.
+- **Ablations use the headline's config and the same fixed round count.** Letting variants
+  early-stop on their own stopped them at 20–112 rounds vs 235, which confounded the comparison
+  with under-training.
+- **Ranker training data:** 30k users (seeded) with positives in both `train_core` and
+  `train_tail`. All 200 candidates per user are kept; users with no tail positive among them are
+  dropped and counted in `data/ranker/seed*/meta.json`.
+- **Tuning:** learning rate, leaves and min-data-in-leaf, by the Phase 3 `Tuner` on the 20k
+  validation subsample. Boosting rounds are early-stopped on 10% of the *ranker-training* users,
+  never on validation. Seeds 42/43/44 each get a full pipeline (their own `train_core` retriever,
+  ranker and saved full-train retriever), refit with the tuned round count. On the 20k
+  subsample, trial differences of ~0.001–0.002 NDCG@10 are within noise, so the fine end of the
+  search (e.g. `min_data_in_leaf` extended down to 1) is splitting hairs, not a real finding.
+- **AUC for two-stage scoring.** Non-candidates keep the retriever's own score, shifted below
+  every candidate (`PrecomputedScorer(..., fallback=retriever)`). Top-10 metrics are identical to
+  giving them `-inf`, but with `-inf` every held-out positive the retriever missed (~31% at
+  K = 200) tied with nearly every sampled negative, and AUC dropped to ~0.84 vs 0.99 for the
+  retriever: a measure of the cut-off, not of ranking. The `two_stage_with_time` rows in
+  `results/tuning/ranker_trials.csv` predate this fix, so their AUC column uses `-inf`.
+- **Settling prediction #3** (fixed now, before Phase 6b). The committed prediction describes
+  a ranker over tag-genome, popularity, genre and recency features, with no EASE. The time
+  (recency) features turned out to leak (above), so **`two_stage_no_ease` settles it**: the
+  closest non-leaking match to what was committed. `two_stage` (with EASE) and
+  `two_stage_with_time` are reported next to it against the same range, never used to settle it.
+- **Phase 6 is validation only.** The test comparison happens in Phase 6b, with the rest.
+
+The original sketch: take the top ~200 candidates from the two-tower model, then re-score with richer features: tag
 genome vector, movie popularity and mean rating, genre overlap with the user's history, recency.
 A small MLP or gradient-boosted trees is enough.
 
@@ -658,11 +731,14 @@ learns a distribution it will never see at serving time.
 **Evaluation on validation:** full-train retriever → top ~200 (masking train) → ranker with
 full-train features → top 10. **Test:** repeat §2.1: retrain the retriever on train + val and the
 ranker on its shifted equivalent (retriever trained on train, labels from val), then score test
-once. Report the recall ceiling (share of relevant items that land in the top 200) next to the
+once. The test-time ranker therefore learns from validation labels, the same slice its config
+was tuned on. That's the §2.1 protocol (config frozen, then refit on newer data), but say so in the
+write-up. Report the recall ceiling (share of relevant items that land in the top 200) next to the
 ablation, since the ranker can't recover what retrieval missed.
 
-**Done when:** `results/ablation.csv` compares retrieval-only vs retrieval + ranking on validation,
-then on test **once**. This is the clean stopping point.
+**Done when:** `results/ablation.csv` compares retrieval-only vs retrieval + ranking (with and
+without EASE features) on validation, per seed, with the recall ceiling and a paired bootstrap.
+The test comparison is Phase 6b's. Phases 0–6 plus the write-up are the clean stopping point.
 
 **Expect a small gain.** MovieLens has few features; the tag genome is your best one. A small or
 zero gain, reported honestly, is a fine result and matches prediction #3 in the plan.
@@ -683,6 +759,13 @@ Measure p50/p99 over ≥1000 requests and write `results/latency.csv`.
 
 **Start with a brute-force dot product** over 62k items (well under a millisecond). Only add FAISS
 if you measure that it matters, and report both numbers.
+
+**Serve the headline ranker's features, or say you don't.** Prediction #6 is for "two-tower +
+ranker over 200 candidates". The headline ranker's 15 features include EASE score and rank (one
+user row times the ~10.6k × 10.6k EASE matrix, then a rank over the candidates) and tag-genome
+cosines to the user's profiles, on top of the retriever. Time each step separately in
+`results/latency.csv`. If a feature is too slow to serve, the served ranker is a different model
+from the evaluated one, and the write-up must say which one the latency number belongs to.
 
 ---
 

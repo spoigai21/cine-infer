@@ -15,7 +15,8 @@ import pandas as pd
 
 RUNS = Path("data/eval_runs")
 OUT = Path("results/analysis/val_by_boundary.csv")
-MODELS = ["most_popular", "item_knn", "implicit_als", "ease", "ease_recent", "two_tower"]
+MODELS = ["most_popular", "item_knn", "implicit_als", "ease", "ease_recent", "two_tower",
+          "two_stage_no_ease", "two_stage", "two_stage_with_time"]
 
 
 def boundaries():

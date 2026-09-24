@@ -23,3 +23,15 @@ two_tower,all,151597,3,0.153262,0.196627
 two_tower,over_1h,6147,3,0.103543,0.111790
 two_tower,same_second,28749,3,0.221391,0.297083
 two_tower,within_1h,116701,3,0.139097,0.176349
+two_stage_no_ease,all,151597,3,0.160463,0.204312
+two_stage_no_ease,over_1h,6147,3,0.125515,0.132601
+two_stage_no_ease,same_second,28749,3,0.225834,0.301461
+two_stage_no_ease,within_1h,116701,3,0.146200,0.184157
+two_stage,all,151597,3,0.178378,0.223090
+two_stage,over_1h,6147,3,0.136242,0.144085
+two_stage,same_second,28749,3,0.245337,0.321541
+two_stage,within_1h,116701,3,0.164102,0.202999
+two_stage_with_time,all,151597,3,0.182756,0.227829
+two_stage_with_time,over_1h,6147,3,0.156462,0.160409
+two_stage_with_time,same_second,28749,3,0.251684,0.329234
+two_stage_with_time,within_1h,116701,3,0.167160,0.206400
