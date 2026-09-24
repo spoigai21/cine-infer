@@ -3,8 +3,8 @@
 Step-by-step build instructions for the plan in `cineinfer.md`. Each step has: what you're doing,
 the commands, a code sketch, **how you know it worked**, and the edge cases that bite here.
 
-> **Status of the code below:** Phases 0–5 are built and verified, and Phase 6 is built and running
-> on validation. Each built phase opens with a "Status" note describing the actual repo; the
+> **Status of the code below:** Phases 0–6b are built and verified, and the one-time test run is
+> done. Each built phase opens with a "Status" note describing the actual repo; the
 > snippets after it are the original sketches, and the code differs from them where the note says.
 > From Phase 7 on, snippets are starting points written from the plan, **not yet executed**.
 
