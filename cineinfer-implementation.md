@@ -336,7 +336,12 @@ The snippet below is the original sketch. The built harness settles these points
   the model's training data: 51,195 when scoring val (train), 55,119 when scoring test (train +
   val). Recommended movies outside that set don't count.
 - **Two-stage models use the same interface.** The ranker (Phase 6) gives its ~200 candidates
-  ranker scores and everything else `-inf`, so non-candidates rank below every candidate.
+  ranker scores shifted above every retriever score, and non-candidates keep the retriever's
+  score (`PrecomputedScorer(..., fallback=retriever)`). Candidates always outrank non-candidates,
+  so top-10 metrics are identical to scoring non-candidates `-inf` (checked: NDCG, recall and
+  coverage unchanged to 6 decimals). AUC needs the fallback: with `-inf`, held-out positives the
+  retriever missed tie with nearly every sampled negative, so AUC would measure the candidate
+  cut-off instead of the ranking (0.84 → 0.99 on validation).
 - **Tuning subsample.** `EvalData.subsample(n, seed)` gives a fixed random subset of users for
   fast tuning (a few seconds for 20k users). Numbers that get reported always use the full population.
 - **Recording runs.** `result_row` / `append_results` write one CSV row per run: model, scheme,
@@ -702,11 +707,12 @@ Decisions beyond the sketch below:
   K = 200) tied with nearly every sampled negative, and AUC dropped to ~0.84 vs 0.99 for the
   retriever: a measure of the cut-off, not of ranking. The `two_stage_with_time` rows in
   `results/tuning/ranker_trials.csv` predate this fix, so their AUC column uses `-inf`.
-- **Settling prediction #3** (fixed now, before Phase 6b). The committed prediction describes
-  a ranker over tag-genome, popularity, genre and recency features, with no EASE. The time
-  (recency) features turned out to leak (above), so **`two_stage_no_ease` settles it**: the
-  closest non-leaking match to what was committed. `two_stage` (with EASE) and
-  `two_stage_with_time` are reported next to it against the same range, never used to settle it.
+- **Settling prediction #3.** The committed check in `results/predictions.csv` names
+  `two_stage`, which is now the headline ranker *with* EASE features, and `settle()` applies it
+  as written. `two_stage_no_ease` is closer to the ranker the prediction had in mind, and on
+  validation the choice decides the outcome (+4.7% vs +16% over retrieval). Choosing it now
+  would mean picking the variant that passes, so the write-up reports it next to the
+  committed result against the same range and never uses it to settle #3.
 - **Phase 6 is validation only.** The test comparison happens in Phase 6b, with the rest.
 
 The original sketch: take the top ~200 candidates from the two-tower model, then re-score with richer features: tag
@@ -742,6 +748,29 @@ The test comparison is Phase 6b's. Phases 0–6 plus the write-up are the clean 
 
 **Expect a small gain.** MovieLens has few features; the tag genome is your best one. A small or
 zero gain, reported honestly, is a fine result and matches prediction #3 in the plan.
+
+---
+
+## Phase 6b — Final test run (once)
+
+`src/final_test.py` (`make final-test`) is the only code that reads the test slice.
+
+- **Frozen configs.** Every model's config comes from its validation results file (`results/
+  baselines.csv`, `two_tower.csv`, `two_stage.csv`), never retyped. Each model is refit on
+  **train + val** (§2.1) and scored on the test slice: train + val items masked, population =
+  users with ≥1 train positive and ≥1 test positive (153,995). Seeded models use seeds 42/43/44.
+- **Sealed results.** Each (model, seed) is written to `data/test_runs/<model>_seed<s>.json` the
+  moment it's scored. A re-run skips it and `score_once` refuses to overwrite it, so resuming
+  after an interruption can never become a second look at test.
+- **Two-stage, shifted one slice.** The ranker trains on candidates from the *full-train*
+  two-tower (saved in Phase 5), with train features and **validation positives** as labels. It
+  then ranks candidates from the train + val two-tower, with train + val features and EASE refit
+  on train + val. Frozen config, same fixed round count (123); both ablations too.
+- **Predictions #1–#4** are settled by `settle()` from `results/test.csv`, exactly as written in
+  `results/predictions.csv`, into `results/predictions_status.csv`.
+- **Tested before running:** sealing, the settle logic (both confirm and refute paths), and the
+  whole two-stage test path end-to-end on the fixture. That test found a real bug first: the
+  LightGBM subprocess depended on the working directory.
 
 ---
 
