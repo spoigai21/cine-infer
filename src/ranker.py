@@ -175,8 +175,8 @@ def build_features(ctx: TrainingSetContext, user_ids, use_ease: bool = True):
     F["tt_rank"] = np.broadcast_to(np.arange(k, dtype=np.float32), (B, k))
     if use_ease and ctx.ease is not None:
         es = np.take_along_axis(np.asarray(ctx.ease.score(user_ids)), cand, axis=1)
-        es = np.where(np.isfinite(es), es, np.nan).astype(np.float32)
-        F["ease_score"], F["ease_rank"] = es, _rank_desc(es)
+        es = np.where(np.isfinite(es) & valid, es, np.nan).astype(np.float32)  # empty slots: NaN,
+        F["ease_score"], F["ease_rank"] = es, _rank_desc(es)  # so they can't shift real ranks
     else:
         F["ease_score"] = F["ease_rank"] = np.full((B, k), np.nan, dtype=np.float32)
     ist = ctx.item_stats[cand]                       # B x k x 5

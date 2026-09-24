@@ -43,4 +43,6 @@ def test_data_dir_is_gitignored():
 def test_health_endpoint():
     from fastapi.testclient import TestClient
     from src.serve import app
-    assert TestClient(app).get("/health").json() == {"status": "ok"}
+    with TestClient(app) as c:  # runs the startup hook
+        body = c.get("/health").json()
+    assert body["status"] == "ok" and "model_loaded" in body

@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test analysis fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test analysis fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -24,6 +24,10 @@ help:
 	@echo "make two-tower   Phase 5: tune the two-tower model on validation -> results/two_tower.csv"
 	@echo "make ranker      Phase 6: two-stage (two-tower -> LightGBM) on validation -> results/ablation.csv"
 	@echo "make final-test  Phase 6b: refit on train+val, score TEST once -> results/test.csv"
+	@echo "make export      Phase 7: export the serving bundle -> models/serving/"
+	@echo "make serve       Phase 7: run the API on :8000"
+	@echo "make serving-parity  Phase 7: server vs batch pipeline (skew check) -> results/serving_parity.csv"
+	@echo "make load-test   Phase 7: latency, prediction #6 -> results/latency.csv"
 	@echo "make analysis    validation metrics by train/val boundary type -> results/analysis/"
 	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
 	@echo "make test        run pytest on the fixture"
@@ -66,6 +70,19 @@ ranker: install
 
 final-test: install
 	$(PY) -u -m src.final_test $(ARGS)
+
+export: install
+	$(PY) -u -m src.export_serving $(ARGS)
+
+serve: install
+	$(VENV)/bin/uvicorn src.serve:app --port 8000
+
+serving-parity: install
+	$(PY) -m scripts.serving_parity --bundle models/serving --eval-dir data/ranker_test/seed42 \
+		--pred data/ranker_test/seed42/pred_two_stage.npy --n 2000 --out results/serving_parity.csv
+
+load-test: install
+	$(PY) -m scripts.load_test
 
 analysis: install
 	$(PY) -m scripts.boundary_breakdown
