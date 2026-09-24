@@ -233,6 +233,8 @@ def two_stage_test(items, fine, seq_tv, test, tt_cfg):
         prep_s = time.time() - t
         users = np.load(d / "eval_users.npy")
         cand = np.load(d / "eval_cand.npy", mmap_mode="r")
+        # the retriever that produced the candidates scores the rest (AUC; see PrecomputedScorer)
+        fallback = tt.load_scorer(MODELS / f"two_tower_tv_seed{s}.pt", seq_tv)
         rc = json.loads((d / "recall_ceiling.json").read_text())
         for name, feats in variants.items():
             if done(name, s):
@@ -243,7 +245,8 @@ def two_stage_test(items, fine, seq_tv, test, tt_cfg):
                              pred_out=d / f"pred_{name}.npy")
             sc = rk.PrecomputedScorer(users, cand, np.load(rep["pred_path"]), len(items),
                                       {**lgb_cfg, "rounds": rounds,
-                                       "features": name.replace("two_stage", "headline", 1)})
+                                       "features": name.replace("two_stage", "headline", 1)},
+                                      fallback=fallback)
             score_once(name, s, sc, test, prep_s + time.time() - t,
                        {f"recall_ceiling@{k}": v for k, v in rc.items()})
 

@@ -257,6 +257,6 @@ Rent a GPU only if a phase proves it's needed, and record the cost.
   cutoff) can use other users' ratings from after that cutoff, so they're excluded from the
   headline two-stage system and reported only as an ablation (+0.0045 NDCG@10 on validation).
 - The headline ranker uses EASE's score and rank as features, added after the predictions were
-  committed, so it is partly a blend with the reference baseline. Prediction #3 is settled on the
-  ranker without them (`two_stage_no_ease`). Item time features were dropped from the ranker
+  committed, so it is partly a blend with the reference baseline. Prediction #3 is settled on it
+  as committed (`two_stage`), with the no-EASE ranker reported alongside. Item time features were dropped from the ranker
   because, under the per-user split, they carry other users' post-cutoff activity.
