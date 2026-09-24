@@ -192,3 +192,37 @@ class ImplicitALS:
         s = (self.U[self.td.rows(user_ids)] @ self.V.T).astype(np.float64)
         s[:, ~self.has_factor] = -np.inf
         return s
+
+
+# ---------------------------------------------------------------------------------------------
+# Recency control: EASE fed only the most recent positives
+# ---------------------------------------------------------------------------------------------
+
+class RecentEASE:
+    """EASE's trained item-item weights, but each user's input is only their `recent_n` most
+    recent positives (by (timestamp, movieId), as the two-tower's evaluation history).
+
+    A control for Phase 5: the two-tower model's lead comes mostly from looking at the last few
+    ratings, which plain EASE (whole history as an unordered set) can't do. If this closes most
+    of the gap, recency, not the neural model, is what drives the gain.
+    """
+    name = "ease_recent"
+
+    def __init__(self, ease: EASE, seq, recent_n: int):
+        from src.two_tower import history_bags
+        self.ease, self.seq, self.n = ease, seq, recent_n
+        self._bags = history_bags
+        self.config = {**ease.config, "recent_n": recent_n}
+        self.col = np.full(seq.n_items, -1, dtype=np.int64)  # catalog index -> EASE column
+        self.col[ease.keep] = np.arange(len(ease.keep))
+
+    def score(self, user_ids):
+        rows = self.seq.rows(user_ids)
+        h, off = self._bags(self.seq, rows, self.seq.lengths[rows], self.n)
+        lens = np.diff(np.append(off, len(h)))
+        r = np.repeat(np.arange(len(rows)), lens)
+        c = self.col[h]
+        ok = c >= 0  # recent positives outside EASE's movie cutoff carry no weight
+        X = sp.csr_matrix((np.ones(ok.sum(), dtype=np.float32), (r[ok], c[ok])),
+                          shape=(len(rows), len(self.ease.keep)))
+        return _scatter(X @ self.ease.B, self.ease.keep, self.seq.n_items)

@@ -208,3 +208,48 @@ def test_tuner_resumes_from_logged_trials(monkeypatch, tmp_path):
     assert m.v == 3 and built == [1, 2, 3, 3]
     # --fresh ignores the log
     assert tb.Tuner("stub", None, resume=False).trials == []
+
+
+
+def test_tuner_treats_spelled_out_defaults_as_same_config(monkeypatch, tmp_path):
+    """Bug found in Phase 5: {"n_uniform": 0} and {} are the same model and must not re-train."""
+    monkeypatch.setattr(tb, "TRIALS_CSV", tmp_path / "trials.csv")
+    built = []
+
+    class Stub:
+        def __init__(self, v):
+            built.append(v)
+            self.v = v
+
+    monkeypatch.setattr(tb.ev, "evaluate", lambda m, d: ev.EvalResult(
+        {"ndcg@10": 1.0, "recall@10": 0, "auc": 0, "coverage": 0, "n_users": 1}, None))
+    canon = lambda c: {"n_uniform": 0, **c}
+    t = tb.Tuner("stub", None, canon=canon)
+    t.trial(lambda: Stub(1), {"lr": 1})
+    t.trial(lambda: Stub(2), {"lr": 1, "n_uniform": 0})   # same model: must be skipped
+    t.trial(lambda: Stub(3), {"lr": 1, "n_uniform": 5})   # different: must train
+    assert built == [1, 3]
+    r = tb.Tuner("stub", None, canon=canon)                # resume matches canonically too
+    r.trial(lambda: Stub(4), {"n_uniform": 0, "lr": 1})
+    assert built == [1, 3]
+
+
+
+def test_recent_ease_uses_only_the_last_n_positives(td, phase1, items):
+    from src import two_tower as tt
+    seq = tt.load_sequences(phase1, items, ("train",))
+    gram = bl.ItemGram(td, min_pos=2)
+    e = bl.EASE(td, gram, 3.0)
+    users = seq.user_ids[seq.lengths > 0]
+    for n in (1, 3, 1000):
+        got = bl.RecentEASE(e, seq, n).score(users)
+        for i, u in enumerate(users):
+            r = seq.rows([u])[0]
+            recent = seq.items[seq.offsets[r]:seq.offsets[r + 1]][-n:]  # last n by time
+            h = np.zeros(len(td.items))
+            h[recent] = 1
+            ref = h[gram.keep] @ e.B
+            assert np.allclose(got[i, gram.keep], ref, atol=1e-4)
+    # with the whole history it is exactly plain EASE
+    assert np.allclose(bl.RecentEASE(e, seq, 10_000).score(users)[:, gram.keep],
+                       e.score(users)[:, gram.keep], atol=1e-4)

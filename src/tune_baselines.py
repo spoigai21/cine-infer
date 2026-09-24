@@ -50,12 +50,16 @@ BASELINE_COLUMNS = ev.RESULT_COLUMNS + ["selection_metric", "selection_value_tun
 class Tuner:
     """Runs trials for one model, logs each to disk immediately, remembers the best."""
 
-    def __init__(self, name, tune_data, resume=True):
+    def __init__(self, name, tune_data, resume=True, trials_csv=None, columns=None, canon=None):
         self.name, self.tune, self.trials = name, tune_data, []
+        # canon(config) fills in defaults, so {"n_uniform": 0} and {} count as the same config.
+        self.canon = canon or (lambda c: c)
+        self.trials_csv = Path(trials_csv) if trials_csv else TRIALS_CSV
+        self.columns = columns or TRIAL_COLUMNS
         self.best = None  # (score, config, fitted model or None if it came from the log)
         self.t0 = time.time()
-        if resume and TRIALS_CSV.exists():
-            logged = pd.read_csv(TRIALS_CSV)
+        if resume and self.trials_csv.exists():
+            logged = pd.read_csv(self.trials_csv)
             for r in logged[logged.model == name].to_dict("records"):
                 self.trials.append(r)
                 if self.best is None or r[SELECT] > self.best[0]:
@@ -64,9 +68,9 @@ class Tuner:
                 print(f"  resuming {name}: {len(self.trials)} logged trials", flush=True)
 
     def trial(self, build, config):
-        key = json.dumps(config, sort_keys=True)
+        key = json.dumps(self.canon(config), sort_keys=True)
         for t in self.trials:
-            if t["config"] == key:
+            if json.dumps(self.canon(json.loads(t["config"])), sort_keys=True) == key:
                 return t[SELECT]
         t = time.time()
         model = build()
@@ -77,9 +81,9 @@ class Tuner:
         row = {"model": self.name, "trial": len(self.trials) + 1, "config": key,
                **{m: s[m] for m in ("ndcg@10", "recall@10", "auc", "coverage", "n_users")},
                "fit_seconds": round(fit_s, 1), "eval_seconds": round(eval_s, 1),
-               "source": "run"}
+               "source": "run", "epochs": getattr(model, "config", {}).get("epochs")}
         self.trials.append(row)
-        ev.replace_model_rows(self.trials, TRIALS_CSV, self.name, TRIAL_COLUMNS)
+        ev.replace_model_rows(self.trials, self.trials_csv, self.name, self.columns)
         print(f"  [{self.name} #{row['trial']}] {key}  ndcg={s['ndcg@10']:.5f} "
               f"recall={s['recall@10']:.5f} auc={s['auc']:.4f} cov={s['coverage']:.4f} "
               f"(fit {fit_s:.0f}s, eval {eval_s:.0f}s)", flush=True)
@@ -132,7 +136,7 @@ def _clean(v):
     return v if isinstance(v, int) else float(f"{v:.6g}")
 
 
-def record(tuner, full_val, models_by_seed):
+def record(tuner, full_val, models_by_seed, out_csv=None):
     """Score the winner(s) on full validation and write the result rows."""
     rows = []
     for seed, model in models_by_seed:
@@ -146,8 +150,8 @@ def record(tuner, full_val, models_by_seed):
         row.update({"selection_metric": SELECT, "selection_value_tune_subsample": tuner.best[0],
                     "n_trials": len(tuner.trials), "tuning_seconds": round(tuner.seconds(), 1)})
         rows.append(row)
-    ev.replace_model_rows(rows, BASELINES_CSV, tuner.name, BASELINE_COLUMNS)
-    ev.replace_model_rows(tuner.trials, TRIALS_CSV, tuner.name, TRIAL_COLUMNS)
+    ev.replace_model_rows(rows, out_csv or BASELINES_CSV, tuner.name, BASELINE_COLUMNS)
+    ev.replace_model_rows(tuner.trials, tuner.trials_csv, tuner.name, tuner.columns)
 
 
 def tune_most_popular(td, tune, full, resume=True):
@@ -218,8 +222,37 @@ def tune_implicit_als(td, tune, full, resume=True, spark_cores=6):
     spark.stop()
 
 
+def tune_ease_recent(td, tune, full, resume=True):
+    """Recency control for the two-tower model (see baselines.RecentEASE): tune how many recent
+    positives EASE sees, then re-check lambda at that N. EASE's movie cutoff stays at the value
+    tuned for plain EASE."""
+    from src.two_tower import load_sequences
+    seq = load_sequences(SPLITS, td.items, td.training)
+    tuned = json.loads(pd.read_csv(BASELINES_CSV).set_index("model").loc["ease", "config"])
+    gram = bl.ItemGram(td, tuned["min_pos"])
+    fits = {}
+
+    def ease_at(lam):
+        if lam not in fits:
+            fits.clear()  # keep one dense B in memory at a time
+            fits[lam] = bl.EASE(td, gram, lam)
+        return fits[lam]
+
+    t = Tuner("ease_recent", tune, resume)
+    lam, n = tuned["lam"], 10
+    fixed = lambda: {"min_pos": tuned["min_pos"]}
+    n = t.search_1d(lambda v: bl.RecentEASE(ease_at(lam), seq, v), [5, 10, 20, 50, 100],
+                    "recent_n", {**fixed(), "lam": lam})
+    lam = t.search_1d(lambda v: bl.RecentEASE(ease_at(v), seq, n), [250.0, 500.0, 1000.0, 2000.0],
+                      "lam", {**fixed(), "recent_n": n})
+    n = t.search_1d(lambda v: bl.RecentEASE(ease_at(lam), seq, v), [5, 10, 20, 50, 100],
+                    "recent_n", {**fixed(), "lam": lam})
+    model = t.best_model(lambda c: bl.RecentEASE(ease_at(c["lam"]), seq, c["recent_n"]))
+    record(t, full, [(0, model)])
+
+
 TUNERS = {"most_popular": tune_most_popular, "item_knn": tune_item_knn, "ease": tune_ease,
-          "implicit_als": tune_implicit_als}
+          "implicit_als": tune_implicit_als, "ease_recent": tune_ease_recent}
 
 
 def main():

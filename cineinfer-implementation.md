@@ -529,6 +529,58 @@ run. GitHub's push record is the independent timestamp; a local commit date can 
 
 ## Phase 5 — Two-tower retrieval model
 
+**Status: built and tuned on validation** (19 trials + 3 seed refits, ~3 h on MPS). The model is
+in `src/two_tower.py` and the tuning runner in `src/tune_two_tower.py` (`make two-tower`,
+resumable). `tests/test_two_tower.py` (8 tests)
+checks the leak-sensitive parts: no history ever contains the target or anything after it, the
+per-user cap, and the loss against a brute-force computation. Deliberately breaking each of these
+fails a test. Decisions beyond the sketch below:
+
+- **Untrained movies get `-inf`.** Movies with no positive in the training data keep their
+  random initial embeddings, so they'd get random scores.
+- **Per-user cap:** each epoch samples at most `pairs_per_user` training pairs per user (tuned),
+  so heavy users don't dominate a metric that weights every user equally.
+- **Cosine similarity / temperature τ** (tuned) instead of raw dot products. The user tower is
+  mean-pooled history + a residual MLP, sharing the item embedding table.
+- **Evaluation history:** the most recent `hist_len` positives of the training data. That's train
+  when scoring val, and train + val in the final test run.
+- **Epochs:** early stopping on the validation tuning subsample (patience 2) picks the epoch count.
+  Seed refits (and the §2.1 train + val refit) train exactly that many epochs, with no early stopping.
+- **Strict-time histories (fixed rule, not tuned).** A training history holds only positives with
+  an **earlier timestamp** than the target, never same-second ones. Within a same-second burst the
+  order comes only from the movieId tie-break. The per-user split cut those same bursts the same
+  way for 31,245 users, so a sequence model can learn the artifact "larger movieIds come next".
+  Measured on the 20k tuning users against EASE: the two-tower model's lead on users cut inside a
+  burst fell from +0.049 to +0.039 NDCG@10 with strict time, and it's about level with EASE
+  elsewhere. Validation rewards the artifact, so tuning would pick it for the wrong reason; hence a
+  fixed rule. The remaining lead is recency: the latest ratings are often the same session as the
+  validation items. The write-up breaks the result down by boundary type.
+- **Same protocol as the baselines:** the Phase 3 `Tuner` (20k subsample, NDCG@10, grid extension,
+  resumable trial log), then seeds 42/43/44 scored on full validation →
+  `results/two_tower.csv`, trials → `results/tuning/two_tower_trials.csv`. The test slice isn't read.
+- **Device:** MPS. One epoch on MPS and on CPU gave NDCG@10 0.09875 vs 0.09866 on the tuning
+  users, so MPS results are trusted. The device is recorded in each result's config.
+- **Run-to-run noise on MPS:** the same config and the same seed scored 0.1534, 0.1519 and 0.1510
+  in three trials (a repeat caused by a config-matching bug, since fixed: the `Tuner` now compares
+  configs with defaults filled in). Trial differences below ~0.0025 NDCG@10 are noise. The tuned
+  config's small late gains (hist_len 10 vs 20, dim 256 vs 128) are within it; the large ones
+  (lr, dim 64 → 128) are not. **Embedding dim is capped at 256 by budget**, but it had flattened.
+- **Where the gain comes from** (`make analysis` → `results/analysis/val_by_boundary.csv`): the
+  tuned model uses only the last 10 positives. It beats EASE by +67% NDCG@10 on users whose
+  train/val cut falls inside a same-second burst, by +20% within an hour, and **loses by 18%**
+  when validation starts more than an hour after training. It predicts the rest of the current
+  session better, not long-run taste. This goes in the write-up next to prediction #2.
+- **Recency control** (`ease_recent` in `results/baselines.csv`, `baselines.RecentEASE`): EASE's
+  trained weights, but each user's input is only their most recent N positives. N and λ are tuned
+  on the same subsample (N = 10, λ = 4000, 14 trials). Full-validation NDCG@10 is 0.1224 vs
+  0.1193 for plain EASE and 0.1533 for the two-tower, so truncating the input closes only ~9% of
+  the gap. The two-tower's lead comes from being *trained* to predict the next item from a
+  history, which learns order-dependent relationships EASE's set-reconstruction weights don't
+  encode. It isn't from simply looking at recent ratings.
+- **Weights** are saved per seed to `models/two_tower_seed{42,43,44}.pt` (git-ignored) with their
+  config, and reloaded with `two_tower.load_scorer`, which refuses weights trained on different
+  data. Phase 6 uses them for validation candidates, and Phase 7 for serving.
+
 ### 5.1 Shape of it
 
 - **Item tower:** `nn.Embedding(n_items, 64)`.

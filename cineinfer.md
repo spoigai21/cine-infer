@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** Phases 0–4 done (setup, data splits, features, evaluation harness, tuned baselines on validation, predictions written). Phases 5–11 not started.
+**Status:** Phases 0–5 done (setup, data splits, features, evaluation harness, tuned baselines, predictions, tuned two-tower model; all on validation). Phases 6–11 not started.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
@@ -202,6 +202,7 @@ happen before this commit, committed or not.
 | 4. Predictions | fill in §4, commit | commit timestamped before any neural training |
 | 5. Two-tower | PyTorch model; user tower built from rating history (pooled item embeddings), not a user-ID embedding; history for each training pair uses only positives rated before the target; in-batch negatives with logQ correction (Yi et al. 2019) and duplicate-item masking | beats most-popular; results over 3+ seeds; tuned only on validation |
 | 6. Ranker | second-stage model over retrieved candidates, using tag-genome features; trained on `train_tail` labels with candidates from a `train_core`-only retriever | ablation: retrieval-only vs retrieval + ranking. **Clean stopping point: phases 0–6 plus the write-up stand on their own.** |
+| 6b. Final test run | every model (baselines, two-tower, two-stage) retrained on train + val with its frozen validation config (§3), then scored **once** on test | `results/test.csv` written by one command; predictions 1–4 settled from it |
 | 7. Serving | FastAPI + precomputed embeddings; brute-force dot product vs FAISS measured; cold-start fallback for unknown user IDs | load test reports p50/p99; unknown-user path returns popular items |
 | 8. Orchestration | Airflow DAG: prep → train → evaluate → publish-if-better | a deliberately worse model is refused publication |
 | 9. pandas vs Spark benchmark | timing at 1M / 5M / 25M, JVM startup and local-mode overhead timed separately from compute; one of Polars or DuckDB included | crossover measured and charted, with and without startup cost |
@@ -246,3 +247,9 @@ Rent a GPU only if a phase proves it's needed, and record the cost.
 - Under the per-user split, most users' validation and test ratings come from the same rating
   session as the end of their training data (measured in `results/data_stats.csv`), so
   "predicting the future" is often "predicting the rest of one sitting".
+  The two-tower model exploits this: it beats EASE by a wide margin when validation continues the
+  last training session, and loses to EASE when there's more than an hour's gap
+  (`results/analysis/val_by_boundary.csv`). Feeding EASE only the most recent
+  ratings closes just ~9% of the gap, so the gain comes from learned next-item structure, not
+  from the input window alone.
+- The two-tower embedding dimension is capped at 256 by compute budget (gains had flattened).
