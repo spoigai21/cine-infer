@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check baselines two-tower ranker analysis fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test analysis fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -23,6 +23,7 @@ help:
 	@echo "make baselines   Phase 3: tune the 4 baselines on validation -> results/baselines.csv"
 	@echo "make two-tower   Phase 5: tune the two-tower model on validation -> results/two_tower.csv"
 	@echo "make ranker      Phase 6: two-stage (two-tower -> LightGBM) on validation -> results/ablation.csv"
+	@echo "make final-test  Phase 6b: refit on train+val, score TEST once -> results/test.csv"
 	@echo "make analysis    validation metrics by train/val boundary type -> results/analysis/"
 	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
 	@echo "make test        run pytest on the fixture"
@@ -62,6 +63,9 @@ two-tower: install
 
 ranker: install
 	$(PY) -u -m src.tune_ranker $(ARGS)
+
+final-test: install
+	$(PY) -u -m src.final_test $(ARGS)
 
 analysis: install
 	$(PY) -m scripts.boundary_breakdown

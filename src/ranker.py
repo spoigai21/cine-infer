@@ -306,7 +306,10 @@ def run_lgb(data_dir, config, seed, features=None, rows=None, fixed_rounds=None,
     import sys
     import tempfile
     from pathlib import Path
-    pred_out = Path(pred_out or tempfile.mktemp(suffix=".npy"))
+    pred_out = Path(pred_out or tempfile.mktemp(suffix=".npy")).resolve()
+    data_dir = Path(data_dir).resolve()
+    save_model = Path(save_model).resolve() if save_model is not None else None
+    repo = Path(__file__).resolve().parents[1]  # `-m src.lgb_ranker` must run from the repo root
     cmd = [sys.executable, "-m", "src.lgb_ranker", "--data", str(data_dir),
            "--config", json.dumps(config), "--seed", str(seed), "--pred-out", str(pred_out)]
     if features is not None:
@@ -319,7 +322,7 @@ def run_lgb(data_dir, config, seed, features=None, rows=None, fixed_rounds=None,
         cmd += ["--fixed-rounds", str(fixed_rounds)]
     if save_model is not None:
         cmd += ["--save-model", str(save_model)]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=repo)
     if res.returncode != 0:
         raise RuntimeError(f"lgb_ranker failed ({res.returncode}):\n{res.stderr[-3000:]}")
     report = json.loads(res.stdout.strip().splitlines()[-1])

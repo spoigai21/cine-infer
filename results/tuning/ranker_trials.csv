@@ -15,3 +15,6 @@ two_stage,4,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_
 two_stage,5,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 100, ""num_leaves"": 31}",0.176860,0.221177,0.990783,0.075300,20000,11.500000,6.700000,run,39
 two_stage,6,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 100, ""num_leaves"": 127}",0.177787,0.221151,0.990789,0.079519,20000,14.300000,6.200000,run,45
 two_stage,7,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 25, ""num_leaves"": 63}",0.178841,0.222883,0.990787,0.079988,20000,18.900000,8.300000,run,88
+two_stage,8,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 400, ""num_leaves"": 63}",0.177822,0.221413,0.990784,0.077996,20000,13.800000,7.400000,run,49
+two_stage,9,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 6, ""num_leaves"": 63}",0.179250,0.223076,0.990787,0.079891,20000,23.800000,6.900000,run,123
+two_stage,10,"{""feature_fraction"": 0.8, ""features"": ""headline"", ""learning_rate"": 0.02, ""min_data_in_leaf"": 1, ""num_leaves"": 63}",0.178236,0.221784,0.990785,0.078465,20000,15.000000,6.700000,run,58
