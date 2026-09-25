@@ -17,3 +17,5 @@ jobs:
       - name: fixture is up to date
         run: python scripts/make_fixture.py && git diff --exit-code tests/fixtures
       - run: pytest -q   # fixture only; the real dataset is never downloaded in CI
+      - name: README matches results/*.csv
+        run: python -m scripts.write_readme --check

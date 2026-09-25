@@ -890,12 +890,31 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 
 ## Phase 10 — Write-up
 
-README sections: what it is, how to run it, results table, predictions (confirmed / refuted), the
-split comparison, limitations. Every number read from `results/*.csv` by a small script with a
-`--check` mode that fails if the README and the CSVs disagree.
+**Status: done.** `README.md` is generated: `make readme` renders `README.template.md`
+(hand-written prose with placeholders) from `results/*.csv`. `make readme-check`, also a CI step,
+fails with a diff if the two disagree.
 
-**State these limitations plainly:** offline metrics only, no A/B test; MovieLens timestamps are
-rating time; no cold-start users exist in this data; the EASE item cutoff.
+- **Every result comes from a committed file.** The generator (`scripts/write_readme.py`) reads
+  only `results/`, so the check runs in CI without the dataset. Numbers that need the per-user
+  metrics (git-ignored) were computed once into committed CSVs by `make test-analysis`:
+  `results/test_gaps.csv` (paired bootstrap CIs for the key test gaps) and
+  `results/analysis/test_by_boundary.csv` (test metrics by session boundary).
+- **An unknown placeholder is an error**, never a blank.
+- **Prose claims are checked.** Sentences that depend on the data (e.g. "the two-tower is worse
+  than EASE when the test starts > 1 h later", "Spark wins at 25M") are asserted in
+  `check_claims()`; if a result changes so one no longer holds, rendering fails. A first draft had
+  hand-typed numbers in the prose ("five of them", "three times", "after 2018"); all were
+  replaced with computed values.
+- **Prediction #7 settled** (`make split-comparison`): EASE at its frozen per-user config, refit
+  on each scheme's train + val, each test slice scored once (sealed like 6b). Random 0.3359,
+  global cutoff 0.1482, per-user 0.1211 NDCG@10. The ≥ 1.5× part holds (2.27×, CI 2.17–2.37),
+  but the ordering fails (global > per-user) → **refuted**. The global cutoff's 3,992 test users
+  are heavy raters active after January 2018, a different population, and the README says so.
+- **Tests** (`tests/test_readme.py`, `tests/test_split_comparison.py`): the committed README is
+  current, a stale README fails the check, unknown placeholders fail, changing a CSV changes the
+  README, a doctored result that falsifies a claim fails rendering, and #7's verdict logic matches
+  the committed wording.
+- The README links the demo video placeholder until Phase 11.
 
 ---
 

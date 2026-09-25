@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** Phases 0–9 done: models evaluated once on test, a worse model refused by the publish gate, predictions #1–#6 settled (Phase 9 benchmark). Phases 10–11 (write-up, demo) not started.
+**Status:** Phases 0–10 done: all seven predictions settled (2 confirmed, 5 refuted), README generated from results/ and checked in CI. Phase 11 (demo video) remains.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
