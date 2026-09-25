@@ -1,0 +1,17 @@
+Phase 8: the publish path, end to end on real data (sandbox registry; production untouched).
+Command: make airflow-publish-demo  (sandbox models/sandbox/, live = the Phase 8 1-epoch candidate)
+DAG run: manual__2026-09-25T19:26:32.011980+00:00  state=success  duration=1223s
+Task states:
+  prep      SUCCESS
+  train     SUCCESS
+  evaluate  SUCCESS
+  gate      SUCCESS
+  publish   SUCCESS
+  reject    SKIPPED (gate branched to publish)
+Candidate (tuned config, 6 epochs): validation NDCG@10 0.15262, Recall@10 0.19585
+Gate: PUBLISH - candidate 0.15262 > live 0.13965 + margin 0.003 validation NDCG@10
+Publish: refit on train + val, ranker rebuilt (val labels, frozen config), bundle exported,
+  smoke-tested in a torch-free process, models/sandbox/serving swapped to bundles/manual__2026-09-25T19_26_32_011980_00_00
+Sandbox registry after: live manual__2026-09-25T19_26_32_011980_00_00 (0.15262); history ['manual__2026-09-25T00_28_04_946798_00_00']
+API check: CINEINFER_BUNDLE=models/sandbox/serving -> /health model_loaded, /recommend served two_stage
+Production models/registry.json, models/serving -> bundles/phase7: byte-identical before and after

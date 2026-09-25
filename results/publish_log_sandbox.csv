@@ -1,0 +1,2 @@
+time,run_id,epochs,candidate_val_ndcg@10,live_val_ndcg@10,live_model,decision,reason
+2026-09-25 12:36:40,manual__2026-09-25T19_26_32_011980_00_00,6,0.152619,0.139647,manual__2026-09-25T00_28_04_946798_00_00,publish,candidate 0.15262 > live 0.13965 + margin 0.003 validation NDCG@10
