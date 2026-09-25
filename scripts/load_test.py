@@ -51,11 +51,23 @@ def cpu_name():
         return platform.processor()
 
 
+def load_average():
+    """1/5/15-min load average: latency is meaningless if other work is competing for the CPU."""
+    try:
+        return os.getloadavg()
+    except OSError:
+        return (float("nan"),) * 3
+
+
 def pct(x, q):
     return float(np.percentile(np.asarray(x), q))
 
 
 def main():
+    load_before = load_average()
+    if load_before[0] > (os.cpu_count() or 1) * 0.5:
+        print(f"WARNING: 1-min load average {load_before[0]:.1f} on {os.cpu_count()} cores; other "
+              f"work is competing for the CPU and latency will be inflated")
     env = {**os.environ, "CINEINFER_BUNDLE": os.environ.get("CINEINFER_BUNDLE", "models/serving")}
     server = subprocess.Popen([sys.executable, "-m", "uvicorn", "src.serve:app", "--port", str(PORT),
                                "--log-level", "warning"], env=env)
@@ -100,12 +112,16 @@ def main():
         server.wait(timeout=30)
 
     power = power_source()
+    load_after = load_average()
     rows = [("setup", "requests_two_stage", len(lat)), ("setup", "requests_fallback", len(lat_c)),
             ("setup", "warmup_requests", 50), ("setup", "concurrency", 1),
             ("setup", "power_source", power), ("setup", "cpu", cpu_name()),
             ("setup", "platform", platform.platform()), ("setup", "model_load_seconds", round(load_s, 1)),
             ("setup", "date", time.strftime("%Y-%m-%d")),
-            ("setup", "threads", os.environ.get("CINEINFER_THREADS", "default")),
+            ("setup", "server_threads", os.environ.get("CINEINFER_THREADS", "0 (library default)")),
+            ("setup", "loadavg_1m_before", round(load_before[0], 2)),
+            ("setup", "loadavg_1m_after", round(load_after[0], 2)),
+            ("setup", "cpu_cores", os.cpu_count()),
             ("two_stage", "share_served_two_stage", float(np.mean([s == "two_stage" for s in strat])))]
     for scheme, l, s in (("two_stage", lat, st), ("popularity_fallback", lat_c, st_c)):
         for q in (50, 90, 99):

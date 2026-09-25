@@ -47,8 +47,10 @@ def rank_desc(x: np.ndarray) -> np.ndarray:
 
 
 class Recommender:
-    def __init__(self, bundle_dir):
+    def __init__(self, bundle_dir, threads: int = 0):
+        """threads: LightGBM prediction threads (0 = LightGBM's default). See src/serve.py."""
         import lightgbm as lgb
+        self.threads = threads
         d = Path(bundle_dir)
         self.manifest = json.loads((d / "manifest.json").read_text())
         t = np.load(d / "two_tower.npz")
@@ -148,7 +150,8 @@ class Recommender:
         t1 = time.perf_counter()
         X = self.features_for(r, cand, tt_score)
         t2 = time.perf_counter()
-        pred = self.booster.predict(X)
+        pred = self.booster.predict(X, num_threads=self.threads) if self.threads else \
+            self.booster.predict(X)
         order = np.lexsort((cand, -pred))[:k]
         t3 = time.perf_counter()
         return self._response(user_id, "two_stage", cand[order].tolist(), pred[order].tolist(),
