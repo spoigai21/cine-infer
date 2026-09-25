@@ -64,6 +64,10 @@ def pct(x, q):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", type=Path, default=OUT)
+    out = ap.parse_args().out
     load_before = load_average()
     if load_before[0] > (os.cpu_count() or 1) * 0.5:
         print(f"WARNING: 1-min load average {load_before[0]:.1f} on {os.cpu_count()} cores; other "
@@ -118,7 +122,7 @@ def main():
             ("setup", "power_source", power), ("setup", "cpu", cpu_name()),
             ("setup", "platform", platform.platform()), ("setup", "model_load_seconds", round(load_s, 1)),
             ("setup", "date", time.strftime("%Y-%m-%d")),
-            ("setup", "server_threads", os.environ.get("CINEINFER_THREADS", "0 (library default)")),
+            ("setup", "server_threads", os.environ.get("CINEINFER_THREADS", "1")),
             ("setup", "loadavg_1m_before", round(load_before[0], 2)),
             ("setup", "loadavg_1m_after", round(load_after[0], 2)),
             ("setup", "cpu_cores", os.cpu_count()),
@@ -133,8 +137,8 @@ def main():
                 rows += [(scheme, f"server_{stage[:-3]}_p50_ms", pct(v, 50)),
                          (scheme, f"server_{stage[:-3]}_p99_ms", pct(v, 99))]
     df = pd.DataFrame(rows, columns=["scheme", "stat", "value"])
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUT, index=False, float_format="%.3f")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out, index=False, float_format="%.3f")
 
     p50, p99 = pct(lat, 50), pct(lat, 99)
     ok = p99 < 25 and p50 < 10

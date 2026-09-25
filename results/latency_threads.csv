@@ -1,0 +1,5 @@
+run_order,server_threads,loadavg_1m_before,loadavg_1m_after,client_p50_ms,client_p90_ms,client_p99_ms,server_retrieval_p99_ms,server_features_p99_ms,server_ranking_p99_ms
+1,default,2.160,17.540,6.810,15.878,60.410,16.414,17.373,9.540
+2,1,17.540,16.210,3.178,4.444,19.257,17.199,4.188,0.922
+3,1,12.920,12.120,3.200,3.844,6.771,1.847,4.076,0.965
+4,default,12.120,14.160,5.164,10.525,25.415,10.861,9.169,8.401

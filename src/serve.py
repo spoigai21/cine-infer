@@ -7,16 +7,17 @@ GET /recommend/{user_id}?k=10   top-k movies: two-stage for known users with his
 The bundle (src/export_serving.py, `make export`) is loaded once at startup from
 $CINEINFER_BUNDLE (default models/serving). This process never imports torch.
 
-Threads: $CINEINFER_THREADS=N caps BLAS / OpenMP / LightGBM threads at N (it must be set before
-NumPy is imported, hence the top of this module). The default (0) leaves the libraries' own
-threading alone, which is what the run that settled prediction #6 used. Single-threading was
-tried as a tail-latency fix but hasn't been measured on a quiet machine yet: the attempt ran
-while an unrelated job had the 1-minute load average at ~90 on 10 cores.
+Threads: $CINEINFER_THREADS=N caps BLAS / OpenMP / LightGBM threads at N (set before NumPy is
+imported, hence the top of this module); 0 leaves the libraries' own threading alone. Default 1:
+a request is a few small single-user operations, and the libraries' thread pools only contend.
+Measured after prediction #6 was settled (results/latency_threads.csv, 4 alternating runs):
+default threading p50 5.2-6.8 ms / p99 25-60 ms, and it pushed the load average from 2 to 17 by
+itself; single-threaded p50 3.2 ms / p99 6.8-19 ms.
 Run: `make serve` (uvicorn on port 8000).
 """
 import os
 
-THREADS = os.environ.get("CINEINFER_THREADS", "0")
+THREADS = os.environ.get("CINEINFER_THREADS", "1")
 if THREADS != "0":
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ.setdefault(var, THREADS)
