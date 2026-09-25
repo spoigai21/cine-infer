@@ -1,0 +1,2 @@
+time,run_id,epochs,candidate_val_ndcg@10,live_val_ndcg@10,live_model,decision,reason
+2026-09-24 17:31:43,manual__2026-09-25T00_28_04_946798_00_00,1,0.139647,0.153760,phase7,reject,candidate 0.13965 <= live 0.15376 validation NDCG@10

@@ -80,7 +80,7 @@ cine-infer/
   docker/                   # api.Dockerfile, requirements-api.txt
   results/                  # CSVs — committed, the source of truth for every number
   .github/workflows/ci.yml  # pytest on the fixture
-  docker-compose.yml, Makefile, requirements.txt, pytest.ini, .env.example
+  docker-compose.yml, Makefile, requirements.txt, pytest.ini
 ```
 
 `src/serve.py` is still the Phase 0 stub (`/health` only); `/recommend` arrives in Phase 7.
@@ -125,20 +125,13 @@ CI regenerates the fixture and fails if it differs from the committed copy.
 | Service | Image | Port |
 |---|---|---|
 | `spark-master`, `spark-worker` | `apache/spark:3.5.7` (standalone cluster, 4 cores / 4 GB worker) | 8080 (UI), 7077 |
-| `airflow` | `apache/airflow:2.10.5-python3.11`, `standalone` mode (SQLite) | **8081** (8080 is Spark's) |
 | `api` | built from `docker/api.Dockerfile` | 8000 |
 
 Development runs Spark in local mode from `.venv`. The cluster exists so the pipeline can run
 unchanged against `spark://spark-master:7077`. `data/` is bind-mounted, never copied into an image
 (`.dockerignore` excludes it).
 
-**Airflow login.** Copy `.env.example` to `.env` (git-ignored) and set a password. `make up` and
-`docker compose` refuse to start without it; there is no default password. `airflow standalone`
-ignores the usual `_AIRFLOW_WWW_USER_*` variables and makes up a random password, so the service
-creates the `.env` user itself before starting, and recreates it on every start so `.env` always
-wins. The SQLite DB lives in `airflow/db/` on the bind mount, so it survives container rebuilds.
-The REST API accepts basic auth (`curl -u user:pass localhost:8081/api/v1/dags`) so Phase 8
-scripts can trigger DAG runs.
+**Airflow** was removed from Compose in Phase 8: it runs from `.venv-airflow` (`make airflow-ui`), because its tasks need the project's environment.
 
 ### 0.8 CI
 
@@ -822,11 +815,32 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 
 ## Phase 8 — Airflow
 
-DAG: `prep → train → evaluate → publish_if_better`. `publish_if_better` compares the new model's
-validation NDCG@10 to the live model's and refuses to publish if it's worse.
+**Status: built; a worse model is refused (the deliverable).** `make airflow-reject-demo`;
+`results/airflow_reject_demo.txt`, `results/publish_log.csv`.
 
-**Done when:** you deliberately publish a worse model (train 1 epoch) and show the DAG rejecting it.
-That test is the deliverable, not the DAG itself.
+- **DAG `cineinfer_retrain`:** `prep → train → evaluate → gate → publish | reject`. Each task
+  runs a step of `src/pipeline.py` in the **project** environment (PyTorch with the Apple GPU,
+  Spark, LightGBM). Airflow 2.10.5 lives in its own `.venv-airflow`, pinned with Airflow's
+  official constraints so it can't disturb the project's packages. The Docker `airflow` service
+  from Phase 0 was removed: a container without the project's environment could only display
+  the DAG, not run it.
+- **Registry** (`models/registry.json`): the live model and its **validation NDCG@10**, which is
+  the same config trained on train only and scored on validation, exactly what the pipeline
+  measures for a candidate. The Phase 7 bundle is registered as `phase7` (0.15376), and
+  `models/serving` became a symlink to `models/bundles/phase7`.
+- **Gate:** publish only if the candidate is **strictly better**. Every decision, either way,
+  is appended to `results/publish_log.csv`, and the branch not taken is skipped. `publish`
+  refuses to run without a "publish" decision, even if called directly.
+- **Publish** (better candidates only): refit the config on train + val, rebuild the ranker on
+  the candidate retriever's candidates (val labels, frozen config), export a bundle, smoke-test
+  it in a torch-free process, then swap `models/serving` atomically (symlink replace) and update
+  the registry. The API picks the new bundle up on restart.
+- **The deliverable run:** 1-epoch candidate, validation NDCG@10 0.13965 vs live 0.15376 →
+  **REJECT**. `publish` was skipped; the live model and symlink are unchanged; the run took 218 s
+  (prep, 1-epoch training, full-validation evaluation, gate).
+- **Tests** (`tests/test_pipeline.py`): worse *and* equal candidates are rejected and logged,
+  publish refuses without the decision, a better candidate swaps the symlink and registry, and
+  the DAG's structure is checked in the Airflow environment. All use temporary paths.
 
 ---
 

@@ -1,0 +1,13 @@
+Phase 8 deliverable: the DAG refuses to publish a deliberately worse model.
+Command: make airflow-reject-demo  (airflow dags test cineinfer_retrain -c '{"epochs": 1}')
+DAG run: manual__2026-09-25T00:28:04.946798+00:00  state=success  duration=218s
+Task states:
+  prep      SUCCESS
+  train     SUCCESS
+  evaluate  SUCCESS
+  gate      SUCCESS
+  reject    SUCCESS
+  publish   SKIPPED (gate branched to reject)
+Candidate (1 epoch): validation NDCG@10 0.13965, Recall@10 0.18094
+Gate: REJECT - candidate 0.13965 <= live 0.15376 validation NDCG@10
+Live model after the run: phase7 (unchanged); models/serving -> bundles/phase7 (unchanged)
