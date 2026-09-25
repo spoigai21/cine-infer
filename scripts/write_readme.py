@@ -151,6 +151,11 @@ def build_values():
     rej = pl[pl.decision == "reject"].iloc[-1]
     v["airflow.candidate"], v["airflow.live"] = f"{rej['candidate_val_ndcg@10']:.4f}", f"{rej['live_val_ndcg@10']:.4f}"
     v["airflow.epochs"] = str(int(rej.epochs))
+    ps = load("publish_log_sandbox.csv")
+    pub = ps[ps.decision == "publish"].iloc[-1]
+    v["airflow.pub.candidate"], v["airflow.pub.live"] = (f"{pub['candidate_val_ndcg@10']:.4f}",
+                                                          f"{pub['live_val_ndcg@10']:.4f}")
+    v["airflow.margin"] = re.search(r"margin ([\d.]+)", pub.reason).group(1)
 
     bm = load("benchmark.csv").set_index(["size", "engine"])
     for (s, e), r in bm.iterrows():

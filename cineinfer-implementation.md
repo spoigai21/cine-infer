@@ -828,7 +828,10 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
   the same config trained on train only and scored on validation, exactly what the pipeline
   measures for a candidate. The Phase 7 bundle is registered as `phase7` (0.15376), and
   `models/serving` became a symlink to `models/bundles/phase7`.
-- **Gate:** publish only if the candidate is **strictly better**. Every decision, either way,
+- **Gate:** publish only if the candidate beats the live model by **more than 0.003** validation
+  NDCG@10 (`CINEINFER_MIN_GAIN`). This was added after Phase 8: identical two-tower runs on MPS
+  differ by up to ~0.0025 (Phase 5), so with a plain "strictly better" rule a same-config retrain
+  could have won, and been published, by chance. Every decision, either way,
   is appended to `results/publish_log.csv`, and the branch not taken is skipped. `publish`
   refuses to run without a "publish" decision, even if called directly.
 - **Publish** (better candidates only): refit the config on train + val, rebuild the ranker on
@@ -838,7 +841,13 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 - **The deliverable run:** 1-epoch candidate, validation NDCG@10 0.13965 vs live 0.15376 →
   **REJECT**. `publish` was skipped; the live model and symlink are unchanged; the run took 218 s
   (prep, 1-epoch training, full-validation evaluation, gate).
-- **Tests** (`tests/test_pipeline.py`): worse *and* equal candidates are rejected and logged,
+- **The publish path, end to end on real data** (`make airflow-publish-demo`,
+  `results/airflow_publish_demo.txt`). `CINEINFER_MODELS_DIR` relocates the whole registry, so
+  it ran in a sandbox (`models/sandbox/`) seeded with the 1-epoch candidate as live, at its
+  measured 0.13965. The DAG trained the tuned config (0.15262) → **PUBLISH** in 20 min: refit on
+  train + val, ranker rebuilt, bundle exported and smoke-tested, `serving` swapped. The API served
+  the new bundle, and the production registry and bundle were byte-identical before and after.
+- **Tests** (`tests/test_pipeline.py`): worse, equal *and* within-noise candidates are rejected and logged,
   publish refuses without the decision, a better candidate swaps the symlink and registry, and
   the DAG's structure is checked in the Airflow environment. All use temporary paths.
 

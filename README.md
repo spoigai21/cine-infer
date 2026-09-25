@@ -143,10 +143,17 @@ per-stage timings. Unknown users get the most-popular list. The server is NumPy 
 
 ## Retraining with Airflow
 
-An Airflow DAG runs prep → train → evaluate → **publish only if better** than the live model, on
-validation NDCG@10, and swaps the served bundle atomically. The deliverable is the refusal: a
-deliberately worse 1-epoch model (validation NDCG@10 0.1396 vs live
-0.1538) was rejected, and the publish step was skipped (`results/airflow_reject_demo.txt`).
+An Airflow DAG runs prep → train → evaluate → **publish only if better** than the live model:
+validation NDCG@10 must beat it by more than 0.003, just above the measured run-to-run
+noise, so a plain retrain can't win by chance. Publishing refits on train + val, rebuilds the
+ranker, exports and smoke-tests a bundle, then swaps the served bundle atomically.
+
+- **Refusal (the deliverable):** a deliberately worse 1-epoch model (validation
+  NDCG@10 0.1396 vs live 0.1538) was rejected, and publish was skipped
+  (`results/airflow_reject_demo.txt`).
+- **Publish, end to end on real data:** in a sandbox registry whose live model is that 1-epoch
+  model, a tuned candidate (0.1526 vs 0.1396) was published and
+  served, with the production registry left byte-identical (`results/airflow_publish_demo.txt`).
 
 ## pandas vs Spark vs Polars vs DuckDB
 
