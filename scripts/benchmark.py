@@ -4,8 +4,10 @@
    whole users in a seeded random order until the row target is reached, so every user's history
    is intact (the per-user split needs it). 25M is the full dataset.
 2. Runs: REPEATS rounds; in each round every (size, engine) runs once in a fresh process
-   (src/bench_pipeline.py), with the engine order rotated between rounds. Each run records
-   startup, cold compute and warm compute, plus the power source and load average just before it.
+   (src/bench_pipeline.py), with the engine order rotated between rounds. Before each run the
+   harness waits until the 1-min load average is <= LOAD_LIMIT (the previous run's own load
+   decays slowly). Each run records startup, cold and warm compute, the cool-down wait, and the
+   power source and load average just before it.
 3. Correctness: at every size, each engine's output must equal pandas' (bench_pipeline.compare_outputs).
    Timings from engines that disagree are worthless, so any mismatch stops the benchmark.
 4. Outputs: results/benchmark_runs.csv (every run), results/benchmark.csv (medians),
@@ -77,8 +79,19 @@ def make_inputs():
     return rows
 
 
+def cool_down(limit=LOAD_LIMIT, timeout=600):
+    """Wait until the 1-min load average is <= limit. The benchmark's own previous run (e.g. a
+    6-thread Spark job) keeps the lagging 1-min average high for a while; waiting lets it decay,
+    so the per-run check detects *other* work rather than the benchmark itself."""
+    t = time.time()
+    while os.getloadavg()[0] > limit and time.time() - t < timeout:
+        time.sleep(5)
+    return round(time.time() - t, 1)
+
+
 def run_one(engine, size):
     inp = BENCH / f"ratings_{size}.parquet"
+    waited = cool_down()
     load = os.getloadavg()[0]
     power = power_source()
     res = subprocess.run([sys.executable, "-m", "src.bench_pipeline", "--engine", engine,
@@ -90,7 +103,7 @@ def run_one(engine, size):
     t = json.loads(res.stdout.strip().splitlines()[-1])
     return {"engine": engine, "size": size, "startup_s": t["startup_s"],
             "cold_compute_s": t["cold_compute_s"], "warm_compute_s": t["warm_compute_s"],
-            "loadavg_1m_before": round(load, 2), "power": power,
+            "loadavg_1m_before": round(load, 2), "cooldown_s": waited, "power": power,
             "time": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
