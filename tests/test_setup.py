@@ -40,9 +40,17 @@ def test_data_dir_is_gitignored():
     assert out.returncode == 0, "data/ must be git-ignored (MovieLens license)"
 
 
-def test_health_endpoint():
-    from fastapi.testclient import TestClient
-    from src.serve import app
-    with TestClient(app) as c:  # runs the startup hook
-        body = c.get("/health").json()
-    assert body["status"] == "ok" and "model_loaded" in body
+def test_health_endpoint(tmp_path):
+    # In a subprocess with no model bundle: the server loads LightGBM when a bundle exists, and
+    # this test process has torch loaded (they segfault together on macOS). test_serving.py
+    # covers the loaded-model case, also in subprocesses.
+    import json
+    import os
+    import sys
+    code = ("import json; from fastapi.testclient import TestClient; from src.serve import app\n"
+            "with TestClient(app) as c: print(json.dumps(c.get('/health').json()))")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT,
+                       env={**os.environ, "CINEINFER_BUNDLE": str(tmp_path / "none")})
+    assert r.returncode == 0, r.stderr[-1500:]
+    body = json.loads(r.stdout.strip().splitlines()[-1])
+    assert body["status"] == "ok" and body["model_loaded"] is False
