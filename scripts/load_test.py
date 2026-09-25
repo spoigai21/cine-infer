@@ -12,8 +12,10 @@ Prediction #6 (committed): two-stage p99 < 25 ms and p50 < 10 ms, "1,000 sequent
 requests to uvicorn on localhost, after 50 warm-up requests, laptop plugged in". The power
 source is recorded; if it isn't AC, the verdict is marked as not settled.
 
-Outputs: results/latency.csv (scheme,stat,value), row 6 of results/predictions_status.csv.
-Usage: `make load-test`.
+Outputs: results/latency.csv (scheme,stat,value), and row 6 of results/predictions_status.csv
+the first time only: once #6 is confirmed or refuted it is sealed, and later runs (e.g. after
+serving changes) only update results/latency.csv. The run that settled #6 is kept as
+results/latency_prediction6.csv. Usage: `make load-test`.
 """
 import json
 import os
@@ -103,6 +105,7 @@ def main():
             ("setup", "power_source", power), ("setup", "cpu", cpu_name()),
             ("setup", "platform", platform.platform()), ("setup", "model_load_seconds", round(load_s, 1)),
             ("setup", "date", time.strftime("%Y-%m-%d")),
+            ("setup", "threads", os.environ.get("CINEINFER_THREADS", "default")),
             ("two_stage", "share_served_two_stage", float(np.mean([s == "two_stage" for s in strat])))]
     for scheme, l, s in (("two_stage", lat, st), ("popularity_fallback", lat_c, st_c)):
         for q in (50, 90, 99):
@@ -123,10 +126,15 @@ def main():
     evidence = (f"two-stage client p50 {p50:.2f} ms (needs < 10), p99 {p99:.2f} ms (needs < 25); "
                 f"1,000 sequential HTTP requests after 50 warm-up, power {power}")
     status = pd.read_csv(STATUS) if STATUS.exists() else pd.DataFrame(columns=["id", "verdict", "evidence"])
+    prior = status[status.id == 6]
+    print(df.to_string(index=False))
+    if len(prior) and prior.verdict.iloc[0] in ("confirmed", "refuted"):
+        print(f"prediction #6 already settled ({prior.verdict.iloc[0]}); not changed. "
+              f"This run: {evidence}")
+        return
     status = pd.concat([status[status.id != 6], pd.DataFrame([{"id": 6, "verdict": verdict,
                                                                 "evidence": evidence}])])
     status.sort_values("id").to_csv(STATUS, index=False)
-    print(df.to_string(index=False))
     print(f"prediction #6: {verdict.upper()} - {evidence}")
 
 

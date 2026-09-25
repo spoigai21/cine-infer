@@ -3,3 +3,4 @@ id,verdict,evidence
 2,refuted,"(EASE - two_tower)/EASE Recall@10 = -0.163; two_tower - EASE = +0.0244 [+0.0230, +0.0256]"
 3,refuted,"(two_stage - two_tower)/two_tower NDCG@10 = +0.215; diff +0.0293 [+0.0288, +0.0299]"
 4,confirmed,most_popular 0.0059 vs lowest other 0.0530 (implicit_als)
+6,refuted,"two-stage client p50 5.23 ms (needs < 10), p99 28.51 ms (needs < 25); 1,000 sequential HTTP requests after 50 warm-up, power AC"
