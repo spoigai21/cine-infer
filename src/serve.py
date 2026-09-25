@@ -1,8 +1,12 @@
 """Phase 7: the recommendation API.
 
+GET /                           the demo page (src/static/demo.html): pick a user, see their
+                                recent liked movies and live recommendations with timings
 GET /health                     liveness + whether the model bundle is loaded
 GET /recommend/{user_id}?k=10   top-k movies: two-stage for known users with history, the
                                 popularity fallback otherwise (see src/serving.py)
+GET /users/random               a random known user id (demo page)
+GET /users/{user_id}/profile    that user's most recent liked movies (demo page)
 
 The bundle (src/export_serving.py, `make export`) is loaded once at startup from
 $CINEINFER_BUNDLE (default models/serving). This process never imports torch.
@@ -22,8 +26,10 @@ if THREADS != "0":
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ.setdefault(var, THREADS)
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
 BUNDLE = os.environ.get("CINEINFER_BUNDLE", "models/serving")
 state = {"recommender": None, "error": None}
@@ -34,7 +40,16 @@ async def lifespan(app):
     if os.path.exists(os.path.join(BUNDLE, "manifest.json")):
         from src.serving import Recommender
         try:
-            state["recommender"] = Recommender(BUNDLE, threads=int(THREADS))
+            rec = Recommender(BUNDLE, threads=int(THREADS))
+            # Warm-up before taking traffic: the first requests after loading are ~10x slower
+            # while the embedding table and feature arrays get paged in (the load test discards
+            # 50 warm-up requests for the same reason). 50 random users, plus the fallback path.
+            import numpy as np
+            rng = np.random.default_rng(0)
+            for _ in range(int(os.environ.get("CINEINFER_WARMUP", "50"))):
+                rec.recommend(rec.sample_user(rng))
+            rec.recommend(-1)
+            state["recommender"] = rec
         except Exception as e:  # keep /health up and say why
             state["error"] = f"{type(e).__name__}: {e}"
     else:
@@ -60,3 +75,25 @@ def recommend(user_id: int, k: int = Query(10, ge=1, le=100)):
     if rec is None:
         raise HTTPException(503, state["error"] or "model not loaded")
     return rec.recommend(user_id, k)
+
+
+def _rec():
+    rec = state["recommender"]
+    if rec is None:
+        raise HTTPException(503, state["error"] or "model not loaded")
+    return rec
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def demo_page():
+    return (Path(__file__).parent / "static" / "demo.html").read_text()
+
+
+@app.get("/users/random")
+def random_user():
+    return {"user_id": _rec().sample_user()}
+
+
+@app.get("/users/{user_id}/profile")
+def profile(user_id: int, n: int = Query(10, ge=1, le=50)):
+    return _rec().profile(user_id, n)

@@ -146,7 +146,8 @@ training data, and it keeps 153,995 users evaluable (the global cutoff keeps
 
 ## Serving
 
-`GET /recommend/{user_id}?k=10` retrieves 200 candidates by brute-force dot product over all
+A demo page at `localhost:8000/` (after `make serve`) shows a user's latest liked movies next to
+their live recommendations and timings. `GET /recommend/{user_id}?k=10` retrieves 200 candidates by brute-force dot product over all
 62,423 movies, builds 15 features, ranks with LightGBM and returns titles, scores and
 per-stage timings. Unknown users get the most-popular list. The server is NumPy + LightGBM only
 (no PyTorch) and loads the model bundle in 2 s.

@@ -822,6 +822,13 @@ features, and a test guards the headline and sealed ablation sets. No run used t
   average from 2 to 17 by itself. `CINEINFER_THREADS=1` (now the default): p50 3.2 ms, p99
   6.8–19 ms. `results/latency.csv` is the latest single-threaded run. The first thread
   experiment ran while an unrelated job held the load average at ~90 and was discarded.
+- **Demo page** (added for Phase 11): `localhost:8000/` (`src/static/demo.html`, no external calls).
+  Pick a user (or *Random* / *Unknown*) to see their latest liked movies, the live top 10 with
+  scores, the strategy used, per-stage server timings and the browser's round trip. `#<userId>`
+  in the address selects a user. It's backed by two read-only endpoints: `/users/random` and
+  `/users/{id}/profile`. The server now **warms up at startup** (50 random users + the fallback,
+  ~1 s) before taking traffic: a fresh server's first requests were ~10× slower while the arrays
+  paged in, the same reason the load test discards 50 warm-up requests.
 - **Brute force, no FAISS.** Retrieval over all 62,423 movies is ~1.4–2 ms at p50. An
   approximate index would save at most that, at a recall cost, so it isn't worth adding.
 - **Docker:** the `api` service installs only the serving dependencies (+ `libgomp1` for

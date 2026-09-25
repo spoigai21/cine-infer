@@ -158,6 +158,24 @@ class Recommender:
                               {"retrieval_ms": (t1 - t0) * 1e3, "features_ms": (t2 - t1) * 1e3,
                                "ranking_ms": (t3 - t2) * 1e3, "total_ms": (t3 - t0) * 1e3})
 
+    # -- demo page helpers (read-only) ---------------------------------------------------------
+    def profile(self, user_id: int, n: int = 10) -> dict:
+        """The user's most recent liked movies (newest first) from the served training data."""
+        r = self.row(user_id)
+        if r is None:
+            return {"user_id": int(user_id), "known": False, "n_liked": 0, "n_rated": 0, "recent": []}
+        hist = self.history(r)
+        recent = hist[-n:][::-1]
+        return {"user_id": int(user_id), "known": True, "n_liked": int(len(hist)),
+                "n_rated": int(len(self.seen(r))),
+                "recent": [{"movieId": int(self.movie_ids[i]), "title": self.titles[i]} for i in recent]}
+
+    def sample_user(self, rng=None) -> int:
+        """A random known user with at least one liked movie."""
+        rng = rng or np.random.default_rng()
+        rows = np.flatnonzero(np.diff(self.offsets) > 0)
+        return int(self.user_ids[rng.choice(rows)])
+
     def _response(self, user_id, strategy, idx, scores, timings):
         return {"user_id": int(user_id), "strategy": strategy,
                 "items": [{"movieId": int(self.movie_ids[i]), "title": self.titles[i],

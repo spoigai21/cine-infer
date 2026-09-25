@@ -139,3 +139,32 @@ with TestClient(app) as c:
 """, env={"CINEINFER_BUNDLE": str(tmp_path / "missing")})
     assert o["h"]["model_loaded"] is False and "make export" in o["h"]["detail"]
     assert o["code"] == 503
+
+
+def test_demo_page_and_its_endpoints(built):
+    """The demo page is served, and the two read-only endpoints it uses are correct."""
+    o = run_py("""
+import json
+from fastapi.testclient import TestClient
+from src.serve import app
+with TestClient(app) as c:
+    page = c.get("/")
+    rnd = c.get("/users/random").json()["user_id"]
+    prof = c.get(f"/users/{rnd}/profile?n=3").json()
+    unknown = c.get("/users/987654321/profile").json()
+    bad = c.get(f"/users/{rnd}/profile?n=0").status_code
+print(json.dumps({"status": page.status_code, "type": page.headers["content-type"],
+                  "html": page.text, "rnd": rnd, "prof": prof, "unknown": unknown, "bad": bad}))
+""", env={"CINEINFER_BUNDLE": str(built["bundle"])})
+    assert o["status"] == 200 and o["type"].startswith("text/html")
+    for needle in ('id="uid"', 'id="recs"', 'id="profile"', "/recommend/", "/users/random"):
+        assert needle in o["html"]
+    seq = built["seq"]
+    r = seq.rows([o["rnd"]])[0]
+    assert seq.lengths[r] > 0                                   # random user has history
+    hist = seq.items[seq.offsets[r]:seq.offsets[r + 1]]
+    ids = pd.read_csv(FIXTURES / "tiny_movies.csv").sort_values("movieId").movieId.to_numpy()
+    assert [m["movieId"] for m in o["prof"]["recent"]] == [int(ids[i]) for i in hist[-3:][::-1]]
+    assert o["prof"]["known"] and o["prof"]["n_liked"] == len(hist)
+    assert o["unknown"] == {"user_id": 987654321, "known": False, "n_liked": 0, "n_rated": 0, "recent": []}
+    assert o["bad"] == 422

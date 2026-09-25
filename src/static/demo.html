@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineInfer demo</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e3e1dc;
+    --accent: #3b5bdb; --accent-soft: #e8edfc; --good: #2b8a3e; --good-soft: #e6f4ea;
+    --warn: #b35c00; --warn-soft: #fdf0e1; --bar: #3b5bdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416; --panel: #1d1d20; --text: #ececf0; --muted: #9a9aa3; --line: #2e2e33;
+      --accent: #8aa2ff; --accent-soft: #232a44; --good: #6fcf8a; --good-soft: #1c2b21;
+      --warn: #f0a55a; --warn-soft: #33261a; --bar: #8aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 28px 20px 40px; }
+  header h1 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 22px 0 18px; }
+  input { width: 150px; padding: 9px 11px; font-size: 15px; border: 1px solid var(--line);
+          border-radius: 8px; background: var(--panel); color: var(--text); }
+  button { padding: 9px 14px; font-size: 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 30px;
+            margin-bottom: 16px; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .badge.two_stage { background: var(--good-soft); color: var(--good); }
+  .badge.popularity_fallback { background: var(--warn-soft); color: var(--warn); }
+  .chip { padding: 3px 9px; border-radius: 6px; background: var(--accent-soft); color: var(--accent);
+          font-size: 13px; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: 1fr 1.35fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  section h2 { margin: 0 0 2px; font-size: 15px; }
+  section .sub { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  ol { margin: 0; padding: 0; list-style: none; }
+  li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: baseline;
+       padding: 7px 0; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  .rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  .title { overflow-wrap: anywhere; }
+  .year { color: var(--muted); }
+  .score { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .timing { margin-top: 14px; }
+  .timing .row { display: grid; grid-template-columns: 78px 1fr 64px; gap: 8px; align-items: center;
+                 font-size: 13px; margin: 5px 0; }
+  .timing .track { height: 8px; border-radius: 4px; background: var(--accent-soft); overflow: hidden; }
+  .timing .fill { height: 100%; background: var(--bar); }
+  .timing .ms { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .empty, .error { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  .error { color: var(--warn); }
+  footer { margin-top: 18px; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CineInfer</h1>
+    <p>Two-tower retrieval (200 candidates) &rarr; LightGBM ranker, served live from this laptop.</p>
+  </header>
+
+  <div class="controls">
+    <input id="uid" type="number" min="1" placeholder="User ID" aria-label="User ID">
+    <button id="go" class="primary">Recommend</button>
+    <button id="random">Random user</button>
+    <button id="unknown" title="An ID that isn't in the data: shows the cold-start fallback">Unknown user</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="grid">
+    <section>
+      <h2>Recently liked</h2>
+      <p class="sub" id="profile-sub">The user's latest movies rated 4&#9733; or higher, newest first.</p>
+      <ol id="profile"><li class="empty" style="display:block">Pick a user to start.</li></ol>
+    </section>
+    <section>
+      <h2>Recommended</h2>
+      <p class="sub">Top 10, excluding everything they've already rated.</p>
+      <ol id="recs"><li class="empty" style="display:block">&nbsp;</li></ol>
+      <div class="timing" id="timing"></div>
+    </section>
+  </div>
+
+  <footer id="footer">Loading model info&hellip;</footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function splitTitle(t) {
+  const m = /^(.*)\s\((\d{4})\)\s*$/.exec(t || "");
+  return m ? [m[1], m[2]] : [t || "", ""];
+}
+
+function renderList(el, items, withScore) {
+  if (!items.length) { el.innerHTML = '<li class="empty" style="display:block">Nothing to show.</li>'; return; }
+  el.innerHTML = items.map((it, i) => {
+    const [name, year] = splitTitle(it.title);
+    const score = withScore && it.score != null ? it.score.toFixed(3) : "";
+    return `<li><span class="rank">${i + 1}</span>` +
+           `<span class="title">${esc(name)} ${year ? `<span class="year">(${year})</span>` : ""}</span>` +
+           `<span class="score">${score}</span></li>`;
+  }).join("");
+}
+
+function renderTiming(t, clientMs) {
+  const stages = [["retrieval", t.retrieval_ms], ["features", t.features_ms], ["ranking", t.ranking_ms]]
+    .filter(([, v]) => v != null);
+  const max = Math.max(1, ...stages.map(([, v]) => v), t.total_ms || 0);
+  const row = (label, v) => `<div class="row"><span>${label}</span>` +
+    `<div class="track"><div class="fill" style="width:${Math.max(2, 100 * v / max)}%"></div></div>` +
+    `<span class="ms">${v.toFixed(1)} ms</span></div>`;
+  $("timing").innerHTML = stages.map(([k, v]) => row(k, v)).join("") + row("server total", t.total_ms);
+  return clientMs;
+}
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${(await r.json().catch(() => ({}))).detail || r.statusText}`);
+  return r.json();
+}
+
+async function show(userId) {
+  if (!Number.isInteger(userId) || userId < 1) { $("status").innerHTML = '<span class="error">Enter a user ID.</span>'; return; }
+  $("uid").value = userId;
+  if (location.hash !== `#${userId}`) history.replaceState(null, "", `#${userId}`);
+  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try {
+    const t0 = performance.now();
+    const rec = await getJSON(`/recommend/${userId}?k=10`);
+    const clientMs = performance.now() - t0;
+    const prof = await getJSON(`/users/${userId}/profile?n=10`);
+    renderList($("recs"), rec.items, true);
+    renderList($("profile"), prof.recent, false);
+    $("profile-sub").textContent = prof.known
+      ? `${prof.n_liked} liked of ${prof.n_rated} rated; latest 10, newest first.`
+      : "Not in the data: no history, so the popularity fallback is used.";
+    renderTiming(rec.timings_ms, clientMs);
+    const label = rec.strategy === "two_stage" ? "two-stage" : "popularity fallback";
+    $("status").innerHTML = `<span class="badge ${rec.strategy}">${label}</span>` +
+      `<span class="chip">user ${rec.user_id}</span>` +
+      `<span class="chip">server ${rec.timings_ms.total_ms.toFixed(1)} ms</span>` +
+      `<span class="chip">browser round trip ${clientMs.toFixed(1)} ms</span>`;
+  } catch (e) {
+    $("status").innerHTML = `<span class="error">${esc(e.message)}</span>`;
+  } finally {
+    document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+  }
+}
+
+$("go").onclick = () => show(parseInt($("uid").value, 10));
+$("uid").addEventListener("keydown", (e) => { if (e.key === "Enter") $("go").click(); });
+$("random").onclick = async () => {
+  try { show((await getJSON("/users/random")).user_id); }
+  catch (e) { $("status").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
+};
+$("unknown").onclick = () => show(999999999);
+
+getJSON("/health").then((h) => {
+  $("footer").textContent = h.model_loaded
+    ? `Model: seed ${h.model.seed}, trained on ${h.model.training_data}, exported ${h.model.created}. Every number on this page comes live from the API.`
+    : `Model not loaded: ${h.detail}`;
+}).catch(() => { $("footer").textContent = "API not reachable."; });
+
+// #<userId> in the address selects a user (on load, and when edited on an open page)
+function showFromHash() {
+  const id = parseInt(location.hash.slice(1), 10);
+  if (id > 0 && id !== parseInt($("uid").value, 10)) show(id);
+}
+window.addEventListener("hashchange", showFromHash);
+showFromHash();
+</script>
+</body>
+</html>
