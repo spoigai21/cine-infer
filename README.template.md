@@ -61,6 +61,25 @@ bucket, including over 1 h ({{boundary.two_stage.over_1h}}).
   with the last time *anyone* rated a movie, and under a per-user split "anyone" includes other
   users' ratings from after this user's cutoff: information a live system wouldn't have.
 
+### Removing the cross-user time leak (validation, after the fact)
+
+The headline's item features (a movie's popularity and mean rating) are computed over the whole
+training set, which under a per-user split includes other users' ratings from *after* this user's
+cutoff. A follow-up rebuilt them **point in time**: only ratings made strictly before the user's
+last training rating, by anyone (`make pit-experiment`). The recomputed headline reproduces
+Phase 6 exactly for every seed, so the comparison is like for like:
+
+| Ranker features (validation, 3 seeds) | NDCG@10 | vs headline (95% CI) |
+|---|---|---|
+| Headline (full-train item stats) | {{pit.headline.ndcg}} | — |
+| Point-in-time item stats | {{pit.pit.ndcg}} | {{pit.pit.diff}} {{pit.pit.ci}} |
+| Point-in-time item stats + point-in-time recency | {{pit.pit_time.ndcg}} | {{pit.pit_time.diff}} {{pit.pit_time.ci}} |
+
+The leak wasn't propping the headline up. Popularity as of the user's own moment is *more*
+informative than popularity over the whole training period, and the leak-free recency features
+recover what the excluded time features offered. This was designed after the test results were
+known, so it's reported on validation only: scoring it on test would be a second look.
+
 ## Predictions (committed before training)
 
 {{predictions.confirmed}} of {{predictions.total}} confirmed, {{predictions.refuted}} refuted.
@@ -179,8 +198,9 @@ Times are rough guides for one laptop. Run one pipeline at a time: several steps
   and tested, not validated on real traffic. {{data.movies_cold}} movies appear only in val/test and
   can't be recommended by any model.
 - **Cross-user time leakage under the per-user split:** a 2008 test rating is predicted by models
-  that saw other users' 2015 ratings. The ranker's time features were excluded for this reason;
-  popularity-based features still carry some of it.
+  that saw other users' 2015 ratings (the models themselves, and the headline ranker's popularity
+  features). Point-in-time features remove it from the ranker and score higher on validation
+  (above); the headline test numbers still use the original features.
 - **The tag genome was computed by GroupLens in 2019 from all the data**, so ranker features built
   from it carry some post-cutoff information (only {{data.movies_genome}} movies have one).
 - **Compute caps:** ALS rank and the two-tower embedding size were capped at 256; EASE and

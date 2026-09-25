@@ -151,6 +151,13 @@ def build_values():
     rej = pl[pl.decision == "reject"].iloc[-1]
     v["airflow.candidate"], v["airflow.live"] = f"{rej['candidate_val_ndcg@10']:.4f}", f"{rej['live_val_ndcg@10']:.4f}"
     v["airflow.epochs"] = str(int(rej.epochs))
+    pe = load("pit_experiment.csv")
+    pm = pe.groupby("variant")[["ndcg@10", "ndcg_diff_vs_headline", "ci_low", "ci_high"]].median()
+    for var in ("headline", "pit", "pit_time"):
+        v[f"pit.{var}.ndcg"] = f4(pm.loc[var, "ndcg@10"])
+    for var in ("pit", "pit_time"):
+        v[f"pit.{var}.diff"] = sgn(pm.loc[var, "ndcg_diff_vs_headline"])
+        v[f"pit.{var}.ci"] = f"[{sgn(pm.loc[var, 'ci_low'])}, {sgn(pm.loc[var, 'ci_high'])}]"
     ps = load("publish_log_sandbox.csv")
     pub = ps[ps.decision == "publish"].iloc[-1]
     v["airflow.pub.candidate"], v["airflow.pub.live"] = (f"{pub['candidate_val_ndcg@10']:.4f}",
@@ -201,6 +208,9 @@ def check_claims():
         g.loc[("two_stage_no_ease", "two_stage", "ndcg@10"), "ci_high"] < 0
     claims["time features would help (so excluding them is a real cost)"] = \
         g.loc[("two_stage_with_time", "two_stage", "ndcg@10"), "ci_low"] > 0
+    pe = load("pit_experiment.csv").groupby("variant")["ci_low"].median()
+    claims["point-in-time features beat the headline's (both variants, CI above 0)"] = \
+        pe["pit"] > 0 and pe["pit_time"] > 0
     false = [c for c, ok in claims.items() if not ok]
     if false:
         raise AssertionError(f"README claims no longer supported by results: {false}")

@@ -767,6 +767,27 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 
 ---
 
+## Follow-up — Point-in-time item features (validation only)
+
+`make pit-experiment` → `results/pit_experiment.csv`. `ranker.ItemTimeline` computes each
+candidate's item stats and recency from **all ratings made strictly before the user's last
+training rating** (exact: sorted (movie, timestamp) keys, prefix sums, one searchsorted per
+pair). The strict `<` keeps the user's own same-second held-out ratings out; a brute-force test
+catches `<=`. The Phase 6 validation pipeline was rebuilt with these columns: same candidates,
+same 30k training users per seed, frozen headline config and 123 rounds. The recomputed headline
+reproduced Phase 6 to 6 decimals for all three seeds.
+
+Result (median of 3 seeds, paired bootstrap): point-in-time item stats +0.0038 NDCG@10 [+0.0035,
++0.0040]; plus point-in-time recency +0.0045 [+0.0043, +0.0048]. The leak wasn't inflating the
+headline; point-in-time popularity is more informative. **Validation only** (designed after test
+was scored), so the headline test numbers are unchanged.
+
+Found while building it: `HEADLINE` was defined as "all features minus time features", so
+appending `pit_*` columns silently grew it from 15 to 20. `BASE_FEATURES` now pins the 17 Phase 6
+features, and a test guards the headline and sealed ablation sets. No run used the grown list.
+
+---
+
 ## Phase 7 — Serving
 
 **Status: built, measured, and prediction #6 settled.** Targets: `make export` (bundle),
