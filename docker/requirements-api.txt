@@ -1,4 +1,6 @@
-# Serving only: kept small so the API image stays light. Grows in Phase 7.
+# Serving only (src/serve.py + src/serving.py): no torch, no Spark.
 fastapi
 uvicorn[standard]
 numpy<2
+scipy
+lightgbm>=4.5,<5

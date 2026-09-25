@@ -63,5 +63,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
+    volumes:
+      - ./models/serving:/app/models/serving:ro   # `make export` first
     ports:
       - "8000:8000"

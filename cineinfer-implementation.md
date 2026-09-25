@@ -776,25 +776,47 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 
 ## Phase 7 — Serving
 
-```python
-@app.get("/recommend/{user_id}")
-def recommend(user_id: int, k: int = 10):
-    if user_id not in user_index:          # cold start
-        return {"items": popular_top_k(k), "strategy": "popularity_fallback"}
-    ...
-```
+**Status: built, measured, and prediction #6 settled.** Targets: `make export` (bundle),
+`make serve` (API on :8000), `make serving-parity` (skew check), `make load-test` (latency).
 
-Measure p50/p99 over ≥1000 requests and write `results/latency.csv`.
-
-**Start with a brute-force dot product** over 62k items (well under a millisecond). Only add FAISS
-if you measure that it matters, and report both numbers.
-
-**Serve the headline ranker's features, or say you don't.** Prediction #6 is for "two-tower +
-ranker over 200 candidates". The headline ranker's 15 features include EASE score and rank (one
-user row times the ~10.6k × 10.6k EASE matrix, then a rank over the candidates) and tag-genome
-cosines to the user's profiles, on top of the retriever. Time each step separately in
-`results/latency.csv`. If a feature is too slow to serve, the served ranker is a different model
-from the evaluated one, and the write-up must say which one the latency number belongs to.
+- **Export (`src/export_serving.py`).** Seed 42's models trained on train + val (the data
+  before test), converted for serving: the two-tower model becomes NumPy arrays (embeddings +
+  MLP weights), plus EASE's weights, the Phase 1 feature tables (train_val), user histories and
+  seen sets, the test-time LightGBM ranker, the popularity list and titles. It goes to
+  `models/serving/` (764 MB, git-ignored) with a provenance manifest and loads in ~3 s.
+- **Server (`src/serving.py`, `src/serve.py`): NumPy + SciPy + LightGBM, never torch** (a
+  test asserts it). PyTorch and LightGBM can't share a process on macOS. `GET
+  /recommend/{user_id}?k=10` retrieves the top 200 (masking seen and untrained movies), builds
+  the 15 headline features, ranks with LightGBM, and returns titles, scores and per-stage
+  timings. Unknown users, and users with no positives, get the train + val popularity list minus
+  anything they've rated (`"strategy": "popularity_fallback"`). `/health` reports whether the
+  bundle loaded and why not.
+- **No training/serving skew** (`results/serving_parity.csv`). The server recomputes features
+  per user; the batch pipeline computed them for the test run. On 2,000 real test users the
+  top-10 is identical for 100% and the candidate sets are identical for 100%. The order within
+  the 200 differs for 2.1%, and `ease_rank` by at most 1, both from GPU (batch) vs CPU (server)
+  float rounding at near-ties. Other features agree to ~1e-6. The check found a real batch
+  bug: padded candidate slots shifted `ease_rank`. No real run had padded slots, so no result
+  changed.
+- **Prediction #6: refuted, sealed.** The committed setup (1,000 sequential HTTP requests after
+  50 warm-up, AC power) measured p50 5.2 ms ✓ and **p99 28.5 ms ✗** (< 25 predicted)
+  (`results/latency_prediction6.csv`). `load_test` never changes a settled #6. System load wasn't
+  recorded for that run; it is now (load average before/after, with a warning when busy).
+- **After the verdict: single-threaded serving** (`results/latency_threads.csv`, 4 alternating
+  runs). The libraries' default thread pools contend on a request made of small single-user
+  operations. Default threading: p50 5.2–6.8 ms, p99 25–60 ms, and it pushed the 1-min load
+  average from 2 to 17 by itself. `CINEINFER_THREADS=1` (now the default): p50 3.2 ms, p99
+  6.8–19 ms. `results/latency.csv` is the latest single-threaded run. The first thread
+  experiment ran while an unrelated job held the load average at ~90 and was discarded.
+- **Brute force, no FAISS.** Retrieval over all 62,423 movies is ~1.4–2 ms at p50. An
+  approximate index would save at most that, at a recall cost, so it isn't worth adding.
+- **Docker:** the `api` service installs only the serving dependencies (+ `libgomp1` for
+  LightGBM) and mounts `models/serving` read-only. Checked: health, a two-stage request and
+  the fallback, from the container.
+- **Tests:** `tests/test_serving.py` exports a bundle from the fixture and checks exact parity
+  with the batch pipeline, the API contract (k bounds, never recommending rated movies), the
+  fallback, and health without a bundle. All server code runs in subprocesses, because the
+  test process has torch loaded.
 
 ---
 

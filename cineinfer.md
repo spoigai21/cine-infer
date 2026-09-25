@@ -4,7 +4,7 @@ A movie recommender trained on 25 million real ratings. It learns what each user
 past ratings and returns the 10 movies they're most likely to rate highly. Every claim comes from a
 measured number, and every model has to beat a tuned simple baseline before it counts.
 
-**Status:** Phases 0–6b done (setup, data splits, features, evaluation harness, tuned baselines, predictions, two-tower model, two-stage ranker, one-time test run: `results/test.csv`, predictions #1–#4 settled in `results/predictions_status.csv`). Phases 7–11 not started.
+**Status:** Phases 0–7 done (through serving): models evaluated once on test, predictions #1–#4 and #6 settled. Phases 8–11 not started.
 **Build guide:** step-by-step instructions in `cineinfer-implementation.md`.
 
 ---
@@ -235,6 +235,8 @@ Rent a GPU only if a phase proves it's needed, and record the cost.
 ## 7. Known limitations to state in the write-up
 
 - Offline metrics only. No A/B test, because that needs real users.
+- Serving latency is measured on one laptop with one client at a time; there's no load test
+  under concurrent traffic.
 - MovieLens timestamps are rating time, not watch time.
 - No cold-start users exist in this dataset; the cold-start path is designed but untested on real traffic.
 - EASE and item-kNN run on an item subset (movies with ≥20 train positives, chosen on validation
