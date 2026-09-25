@@ -1,0 +1,4 @@
+scheme,model,n_users,ndcg@10,ndcg_ci_low,ndcg_ci_high,recall@10,coverage,coverage_denominator,excluded_no_train_positive,excluded_no_target_positive,ratio_vs_global,ratio_ci_low,ratio_ci_high
+user,ease,153995,0.121150,0.120224,0.122063,0.148191,0.056732,55119,336,8210,0.817707,,
+global,ease,3992,0.148158,0.141515,0.154697,0.139915,0.039636,45110,24859,133690,1.000000,,
+random,ease,148766,0.335906,0.334491,0.337316,0.360807,0.049307,57984,264,13511,2.267213,2.174913,2.372356

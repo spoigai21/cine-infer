@@ -5,3 +5,4 @@ id,verdict,evidence
 4,confirmed,most_popular 0.0059 vs lowest other 0.0530 (implicit_als)
 5,refuted,1M with startup: pandas 0.80s vs spark 7.10s; 1M without startup: pandas 0.51s vs spark 2.08s; 5M with startup: pandas 3.44s vs spark 8.46s; 5M without startup: pandas 3.11s vs spark 3.32s; 25M with startup: pandas 34.93s vs spark 15.59s; 25M without startup: pandas 35.57s vs spark 8.95s
 6,refuted,"two-stage client p50 5.23 ms (needs < 10), p99 28.51 ms (needs < 25); 1,000 sequential HTTP requests after 50 warm-up, power AC"
+7,refuted,"EASE test NDCG@10: random 0.3359, per-user 0.1211, global 0.1482; random/global = 2.27 (95% CI 2.17-2.37; needs >= 1.5); order random > global > user"

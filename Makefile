@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test airflow-install airflow-reject-demo airflow-ui benchmark analysis fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test airflow-install airflow-reject-demo airflow-ui benchmark split-comparison readme readme-check analysis fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -32,6 +32,9 @@ help:
 	@echo "make airflow-reject-demo  Phase 8: run the DAG with a 1-epoch (worse) model; it must be rejected"
 	@echo "make airflow-ui   Phase 8: Airflow web UI on :8080 (airflow standalone)"
 	@echo "make benchmark   Phase 9: pandas vs Spark vs Polars vs DuckDB (plug in, idle machine) -> results/benchmark*"
+	@echo "make split-comparison  Phase 10: EASE on each split scheme's test slice (prediction #7)"
+	@echo "make readme      Phase 10: regenerate README.md from results/*.csv"
+	@echo "make readme-check  Phase 10: fail if README.md disagrees with results/*.csv"
 	@echo "make analysis    validation metrics by train/val boundary type -> results/analysis/"
 	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
 	@echo "make test        run pytest on the fixture"
@@ -110,6 +113,9 @@ airflow-ui: airflow-install
 
 benchmark: install
 	$(PY) -u -m scripts.benchmark
+
+split-comparison: install
+	$(PY) -u -m src.split_comparison
 
 analysis: install
 	$(PY) -m scripts.boundary_breakdown
