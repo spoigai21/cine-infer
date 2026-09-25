@@ -45,7 +45,8 @@ def main(argv=None):
     p.add_argument("--rows", default=None, type=Path, help="npy of eval rows to score")
     p.add_argument("--fixed-rounds", type=int, default=None)
     p.add_argument("--save-model", default=None, type=Path)
-    p.add_argument("--pred-out", required=True, type=Path)
+    p.add_argument("--pred-out", default=None, type=Path)
+    p.add_argument("--no-predict", action="store_true", help="train (and save) only")
     p.add_argument("--threads", type=int, default=6)
     a = p.parse_args(argv)
     t0 = time.time()
@@ -77,6 +78,14 @@ def main(argv=None):
         rounds = a.fixed_rounds
     fit_s = time.time() - t0
 
+    if a.no_predict:
+        if a.save_model:
+            a.save_model.parent.mkdir(parents=True, exist_ok=True)
+            booster.save_model(str(a.save_model), num_iteration=rounds)
+        print(json.dumps({"rounds": int(rounds), "fit_seconds": round(fit_s, 1),
+                          "total_seconds": round(time.time() - t0, 1), "features": feats,
+                          "torch_loaded": "torch" in sys.modules}))
+        return
     E = np.load(a.data / "eval_X.npy", mmap_mode="r")
     rows = np.load(a.rows) if a.rows else np.arange(len(E))
     pred = np.empty((len(rows), E.shape[1]), dtype=np.float32)

@@ -299,7 +299,7 @@ def write_eval_features(ctx, user_ids, out_dir, use_ease=True, batch=1024):
 
 
 def run_lgb(data_dir, config, seed, features=None, rows=None, fixed_rounds=None,
-            save_model=None, pred_out=None):
+            save_model=None, pred_out=None, predict=True):
     """Train + predict in a separate process (src/lgb_ranker.py). Returns its JSON report."""
     import json
     import subprocess
@@ -322,6 +322,8 @@ def run_lgb(data_dir, config, seed, features=None, rows=None, fixed_rounds=None,
         cmd += ["--fixed-rounds", str(fixed_rounds)]
     if save_model is not None:
         cmd += ["--save-model", str(save_model)]
+    if not predict:
+        cmd += ["--no-predict"]
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=repo)
     if res.returncode != 0:
         raise RuntimeError(f"lgb_ranker failed ({res.returncode}):\n{res.stderr[-3000:]}")

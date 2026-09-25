@@ -21,3 +21,7 @@ airflow/logs/
 airflow/db/
 
 .DS_Store
+
+# Airflow (Phase 8): its own environment + home, never committed
+.venv-airflow/
+airflow_home/

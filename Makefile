@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test analysis fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test airflow-install airflow-reject-demo airflow-ui analysis fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -28,10 +28,13 @@ help:
 	@echo "make serve       Phase 7: run the API on :8000"
 	@echo "make serving-parity  Phase 7: server vs batch pipeline (skew check) -> results/serving_parity.csv"
 	@echo "make load-test   Phase 7: latency, prediction #6 -> results/latency.csv"
+	@echo "make airflow-install   Phase 8: Airflow 2.10 in .venv-airflow (+ metadata DB)"
+	@echo "make airflow-reject-demo  Phase 8: run the DAG with a 1-epoch (worse) model; it must be rejected"
+	@echo "make airflow-ui   Phase 8: Airflow web UI on :8080 (airflow standalone)"
 	@echo "make analysis    validation metrics by train/val boundary type -> results/analysis/"
 	@echo "make fixture     regenerate tests/fixtures/*.csv (synthetic, safe to commit)"
 	@echo "make test        run pytest on the fixture"
-	@echo "make up / down   start / stop the Docker Compose stack (Spark, Airflow, API)"
+	@echo "make up / down   start / stop the Docker Compose stack (Spark, API)"
 	@echo "make clean       remove caches and derived data (keeps the downloaded zip)"
 
 $(VENV)/.installed: requirements.txt
@@ -84,6 +87,26 @@ serving-parity: install
 load-test: install
 	$(PY) -m scripts.load_test
 
+AIRFLOW_ENV := AIRFLOW_HOME=$(CURDIR)/airflow_home AIRFLOW__CORE__DAGS_FOLDER=$(CURDIR)/dags \
+	AIRFLOW__CORE__LOAD_EXAMPLES=false
+AIRFLOW_CONSTRAINTS := https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt
+
+.venv-airflow/.installed:
+	$(PYTHON) -m venv .venv-airflow
+	.venv-airflow/bin/python -m pip install --upgrade pip
+	.venv-airflow/bin/python -m pip install "apache-airflow==2.10.5" --constraint $(AIRFLOW_CONSTRAINTS)
+	$(AIRFLOW_ENV) .venv-airflow/bin/airflow db migrate
+	touch $@
+
+airflow-install: .venv-airflow/.installed
+
+airflow-reject-demo: install airflow-install
+	$(PY) -m src.pipeline init-registry
+	$(AIRFLOW_ENV) .venv-airflow/bin/airflow dags test cineinfer_retrain -c '{"epochs": 1}'
+
+airflow-ui: airflow-install
+	$(AIRFLOW_ENV) .venv-airflow/bin/airflow standalone
+
 analysis: install
 	$(PY) -m scripts.boundary_breakdown
 
@@ -94,7 +117,6 @@ test: install
 	$(PY) -m pytest -q
 
 up:
-	@test -f .env || { echo "Missing .env: cp .env.example .env and set a password"; exit 1; }
 	docker compose up -d --build
 
 down:

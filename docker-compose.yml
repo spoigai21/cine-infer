@@ -1,4 +1,5 @@
-# Local stack: Spark (standalone cluster), Airflow, and the API.
+# Local stack: Spark (standalone cluster) and the API. Airflow runs from .venv-airflow
+# (make airflow-ui): its tasks need the project's environment, which a container doesn't have.
 # Development runs Spark in local mode from .venv; this cluster is for running the pipeline
 # unchanged against a "real" master (spark://spark-master:7077).
 # data/ is mounted read-write but never baked into an image (MovieLens license).
@@ -25,39 +26,6 @@ services:
       SPARK_WORKER_CORES: "4"
     depends_on:
       - spark-master
-
-  airflow:
-    image: apache/airflow:2.10.5-python3.11
-    # `standalone` (SQLite + SequentialExecutor) is fine for one local DAG, but it ignores
-    # _AIRFLOW_WWW_USER_* and invents a random admin password. So create the login from .env
-    # first (standalone then skips its own), recreating it each start so .env always wins.
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        set -e
-        airflow db migrate > /dev/null
-        airflow users delete -u "$$ADMIN_USER" > /dev/null 2>&1 || true
-        airflow users create -u "$$ADMIN_USER" -p "$$ADMIN_PASSWORD" -r Admin \
-          -f Admin -l User -e admin@localhost > /dev/null
-        exec airflow standalone
-    environment:
-      ADMIN_USER: ${AIRFLOW_ADMIN_USER:?copy .env.example to .env}
-      ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?copy .env.example to .env}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/cineinfer/dags
-      # Keep the SQLite DB on the bind mount so it survives container rebuilds.
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/db/airflow.db
-      # Basic auth on the REST API, so scripts (Phase 8) can trigger and inspect DAG runs.
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
-    volumes:
-      - ./dags:/opt/cineinfer/dags
-      - ./src:/opt/cineinfer/src:ro
-      - ./data:/opt/cineinfer/data
-      - ./results:/opt/cineinfer/results
-      - ./airflow/db:/opt/airflow/db
-      - ./airflow/logs:/opt/airflow/logs
-    ports:
-      - "8081:8080"   # Airflow UI (8080 is taken by Spark)
 
   api:
     build:
