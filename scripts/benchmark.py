@@ -178,9 +178,9 @@ def settle(runs, med):
 
 def main():
     t0 = time.time()
-    if power_source() != "AC" or os.getloadavg()[0] > LOAD_LIMIT:
-        print(f"WARNING: power {power_source()}, load {os.getloadavg()[0]:.1f}: #5 will not be "
-              f"settled from this run (needs AC and load <= {LOAD_LIMIT})", flush=True)
+    if power_source() != "AC":
+        print(f"WARNING: power {power_source()}: #5 will not be settled from this run (needs AC)",
+              flush=True)
     rows = make_inputs()
     print(f"inputs: {rows}", flush=True)
     runs = []

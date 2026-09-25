@@ -3,4 +3,5 @@ id,verdict,evidence
 2,refuted,"(EASE - two_tower)/EASE Recall@10 = -0.163; two_tower - EASE = +0.0244 [+0.0230, +0.0256]"
 3,refuted,"(two_stage - two_tower)/two_tower NDCG@10 = +0.215; diff +0.0293 [+0.0288, +0.0299]"
 4,confirmed,most_popular 0.0059 vs lowest other 0.0530 (implicit_als)
+5,refuted,1M with startup: pandas 0.80s vs spark 7.10s; 1M without startup: pandas 0.51s vs spark 2.08s; 5M with startup: pandas 3.44s vs spark 8.46s; 5M without startup: pandas 3.11s vs spark 3.32s; 25M with startup: pandas 34.93s vs spark 15.59s; 25M without startup: pandas 35.57s vs spark 8.95s
 6,refuted,"two-stage client p50 5.23 ms (needs < 10), p99 28.51 ms (needs < 25); 1,000 sequential HTTP requests after 50 warm-up, power AC"

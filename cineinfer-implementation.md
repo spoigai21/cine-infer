@@ -846,14 +846,45 @@ zero gain, reported honestly, is a fine result and matches prediction #3 in the 
 
 ## Phase 9 — pandas vs Spark vs Polars/DuckDB
 
-Same feature pipeline, four implementations, at 1M / 5M / 25M rows.
+**Status: measured; prediction #5 settled (refuted).** `make benchmark` (~16 min);
+`results/benchmark.csv` (medians), `results/benchmark_runs.csv` (all 36 runs),
+`results/benchmark.png`.
 
-**Time two things separately:**
-- **startup** (Spark JVM boot, session creation) — several seconds, and it's not compute
-- **compute** (the actual job)
+- **Workload** (`src/bench_pipeline.py`): the Phase 1 pipeline, meaning the per-user split with
+  `train_core`/`train_tail`, plus item, user and user-genre features from train, all written to
+  Parquet. It's implemented in pandas, Spark (the actual Phase 1 functions), Polars and DuckDB.
+  **All four produce identical outputs**, checked on the fixture (a test that also catches a
+  one-row split difference) and on the real data at every size before any timing is reported.
+- **Inputs:** 1,000,379 / 5,001,313 / 25,000,095 ratings. The smaller sizes take whole users in a
+  seeded random order, so every history is intact.
+- **Timing, fixed before running:** each run is a fresh process measuring *startup* (import,
+  plus the JVM and session for Spark), *cold compute* (first run: read → write outputs) and
+  *warm compute* (a second run in the same process). Prediction #5's "with startup" is startup +
+  cold compute; "without startup" is warm compute, the most Spark-favourable reading. Spark ran
+  `local[6]` with 16 MB input splits; Polars and DuckDB were capped at 6 threads; pandas is
+  single-threaded. There were 3 repeats with the engine order rotated each round, and medians
+  are reported.
+- **Conditions:** every run started on AC power with the 1-min load average ≤ 3.0. The harness
+  waits for the load to settle before each run (max wait 75 s). The first attempt was stopped
+  after a few runs and discarded, because its check tripped on the lagging load of its own
+  previous Spark run. The `stock-agent-analysis` daemon was stopped for the run.
 
-Report both. Without that split, pandas looks better than it deserves at small sizes, and an
-interviewer who knows Spark will catch it.
+| rows | pandas (with / without startup) | Spark | Polars | DuckDB |
+|---|---|---|---|---|
+| 1M | 0.80 / 0.51 s | 7.10 / 2.08 s | 0.24 / 0.08 s | 0.13 / 0.11 s |
+| 5M | 3.44 / 3.11 s | 8.46 / 3.32 s | 0.50 / 0.37 s | 0.39 / 0.33 s |
+| 25M | **34.9 / 35.6 s** | **15.6 / 9.0 s** | 2.6 / 2.0 s | 1.5 / 1.5 s |
+
+- **Prediction #5 — refuted.** pandas wins at 1M and 5M in both timings (at 5M warm by only
+  3.11 vs 3.32 s), but **Spark wins at 25M in both**: 2.2× with startup, 4× without. The crossover
+  lies between 5M and 25M rows. The reasoning ("local-mode Spark pays shuffle and serialization
+  that pandas doesn't") held at small sizes. It missed that single-threaded pandas grows
+  super-linearly here (sort + joins: ~10× from 5M to 25M), while Spark spreads the work over 6
+  cores and its fixed overhead gets amortised.
+- **The bigger finding: neither is the right tool on one machine.** DuckDB and Polars, both
+  multi-threaded, columnar and single-node, run the whole pipeline in 1.5–2.6 s at 25M, about 6×
+  faster than Spark and ~20× faster than pandas, with no JVM. Spark earns its place when data
+  stops fitting on one machine, which this benchmark (one laptop) doesn't test.
 
 ---
 
