@@ -5,13 +5,15 @@
 
 Every task runs a step of src/pipeline.py in the PROJECT's environment (.venv: PyTorch with the
 Apple GPU, Spark, LightGBM). Airflow itself lives in .venv-airflow and only orchestrates.
-`gate` compares the candidate's validation NDCG@10 with the live model's (models/registry.json),
+`gate` compares the candidate's validation NDCG@10 with the live model's (models/registry.json;
+$CINEINFER_MODELS_DIR relocates the registry, e.g. to a sandbox), requires a margin above noise,
 logs the decision to results/publish_log.csv, and branches: a worse model never reaches publish.
 
 Params: epochs (int, optional) overrides the tuned epoch count; epochs=1 gives the deliberately
 worse candidate. Run: `make airflow-reject-demo` (airflow dags test, no scheduler needed).
 """
 import json
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +39,8 @@ def decide(run_id, **_):
                          capture_output=True, text=True)
     print(out.stdout, out.stderr)
     out.check_returncode()
-    decision = json.loads((REPO / "models" / "candidates" / safe_run_id(run_id) /
+    models = Path(os.environ.get("CINEINFER_MODELS_DIR", REPO / "models")).resolve()
+    decision = json.loads((models / "candidates" / safe_run_id(run_id) /
                            "decision.json").read_text())
     print(f"gate decision: {decision['decision']} ({decision['reason']})")
     return "publish" if decision["decision"] == "publish" else "reject"

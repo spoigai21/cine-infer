@@ -9,7 +9,7 @@ tasks).
             count (a 1-epoch model is the deliberately worse candidate the DAG must reject)
   evaluate  full-validation NDCG@10 of that retriever (151,597 users, the Phase 2 harness)
   gate      compare with the live model's validation NDCG@10 from models/registry.json; writes
-            decision.json ("publish" only if strictly better) and appends to
+            decision.json ("publish" only if better by more than MIN_GAIN) and appends to
             results/publish_log.csv whatever the outcome
   publish   only after a "publish" decision: refit the same config on train + val, rebuild
             the ranker on its candidates (val labels, frozen config), export a bundle, smoke-test
@@ -30,12 +30,19 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-MODELS = REPO / "models"
+# $CINEINFER_MODELS_DIR relocates the whole registry (registry, candidates, bundles, serving) and
+# $CINEINFER_PUBLISH_LOG the decision log, so the publish path can run end to end in a sandbox
+# without touching the model actually being served.
+MODELS = Path(os.environ.get("CINEINFER_MODELS_DIR", REPO / "models")).resolve()
 REGISTRY = MODELS / "registry.json"
 CANDIDATES = MODELS / "candidates"
 BUNDLES = MODELS / "bundles"
 SERVING = MODELS / "serving"
-PUBLISH_LOG = REPO / "results" / "publish_log.csv"
+PUBLISH_LOG = Path(os.environ.get("CINEINFER_PUBLISH_LOG", REPO / "results" / "publish_log.csv"))
+# A candidate must beat the live model by more than run-to-run noise: identical two-tower runs on
+# MPS differed by up to ~0.0025 validation NDCG@10 (Phase 5), so a same-config retrain could
+# "win" by chance. The margin is set just above that.
+MIN_GAIN = float(os.environ.get("CINEINFER_MIN_GAIN", "0.003"))
 SPLITS = REPO / "data" / "splits.parquet"
 MOVIES = REPO / "data" / "ml-25m" / "movies.csv"
 SEED = 42
@@ -88,6 +95,23 @@ def init_registry(force=False):
     return reg
 
 
+def seed_registry(candidate_dir):
+    """Start a (sandbox) registry whose live model is an already-evaluated candidate, at its
+    measured validation score. Its bundle was never built, so nothing is served yet; the first
+    publish creates `serving`. Refuses to overwrite an existing registry."""
+    if REGISTRY.exists():
+        raise RuntimeError(f"{REGISTRY} exists; refusing to overwrite")
+    d = Path(candidate_dir)
+    m = json.loads((d / "metrics.json").read_text())
+    c = json.loads((d / "candidate.json").read_text())
+    reg = {"live": {"model_id": d.name, "val_ndcg@10": m["ndcg@10"], "epochs": c["config"]["epochs"],
+                    "bundle": None, "published": f"seeded from {d} (measured score; no bundle)"},
+           "history": []}
+    MODELS.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(REGISTRY, reg)
+    return reg
+
+
 def train(run_id, epochs=None):
     from src import evaluate as ev
     from src import two_tower as tt
@@ -123,10 +147,10 @@ def gate(run_id):
     cand = json.loads((d / "metrics.json").read_text())["ndcg@10"]
     epochs = json.loads((d / "candidate.json").read_text())["config"]["epochs"]
     live = load_registry()["live"]
-    better = cand > live["val_ndcg@10"]
+    better = cand > live["val_ndcg@10"] + MIN_GAIN
     decision = "publish" if better else "reject"
     reason = (f"candidate {cand:.5f} {'>' if better else '<='} live {live['val_ndcg@10']:.5f} "
-              f"validation NDCG@10")
+              f"+ margin {MIN_GAIN:.3f} validation NDCG@10")
     write_json_atomic(d / "decision.json", {"decision": decision, "reason": reason,
                                             "candidate_val_ndcg@10": cand,
                                             "live_val_ndcg@10": live["val_ndcg@10"],
@@ -235,12 +259,17 @@ def append_log(row):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("step", choices=["init-registry", "train", "evaluate", "gate", "publish"])
+    p.add_argument("step", choices=["init-registry", "seed-registry", "train", "evaluate", "gate",
+                                    "publish"])
+    p.add_argument("--from-candidate", default=None, help="seed-registry: an evaluated candidate dir")
     p.add_argument("--run-id", default=None)
     p.add_argument("--epochs", type=int, default=None)
     a = p.parse_args()
     if a.step == "init-registry":
         print(json.dumps(init_registry(), indent=1))
+        return
+    if a.step == "seed-registry":
+        print(json.dumps(seed_registry(a.from_candidate), indent=1))
         return
     if not a.run_id:
         p.error("--run-id is required")

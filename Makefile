@@ -12,7 +12,7 @@ SPARK_JAVA_HOME ?= $(firstword $(foreach d,$(JAVA_CANDIDATES),$(wildcard $(d))))
 export JAVA_HOME := $(SPARK_JAVA_HOME)
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 
-.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test airflow-install airflow-reject-demo airflow-ui benchmark split-comparison test-analysis readme readme-check analysis fixture test up down clean
+.PHONY: help install check-java data prep eval-check baselines two-tower ranker final-test export serve serving-parity load-test airflow-install airflow-reject-demo airflow-publish-demo airflow-ui benchmark split-comparison test-analysis readme readme-check analysis fixture test up down clean
 
 help:
 	@echo "make install     create .venv and install requirements"
@@ -30,6 +30,7 @@ help:
 	@echo "make load-test   Phase 7: latency, prediction #6 -> results/latency.csv"
 	@echo "make airflow-install   Phase 8: Airflow 2.10 in .venv-airflow (+ metadata DB)"
 	@echo "make airflow-reject-demo  Phase 8: run the DAG with a 1-epoch (worse) model; it must be rejected"
+	@echo "make airflow-publish-demo  Phase 8: sandbox registry (live = 1-epoch model); a tuned candidate is published end to end"
 	@echo "make airflow-ui   Phase 8: Airflow web UI on :8080 (airflow standalone)"
 	@echo "make benchmark   Phase 9: pandas vs Spark vs Polars vs DuckDB (plug in, idle machine) -> results/benchmark*"
 	@echo "make split-comparison  Phase 10: EASE on each split scheme's test slice (prediction #7)"
@@ -108,6 +109,14 @@ airflow-install: .venv-airflow/.installed
 airflow-reject-demo: install airflow-install
 	$(PY) -m src.pipeline init-registry
 	$(AIRFLOW_ENV) .venv-airflow/bin/airflow dags test cineinfer_retrain -c '{"epochs": 1}'
+
+SANDBOX := $(CURDIR)/models/sandbox
+PHASE8_CANDIDATE := $(firstword $(wildcard $(CURDIR)/models/candidates/manual__*))
+airflow-publish-demo: install airflow-install
+	@test -n "$(PHASE8_CANDIDATE)" || { echo "run make airflow-reject-demo first (its 1-epoch candidate seeds the sandbox)"; exit 1; }
+	test -f $(SANDBOX)/registry.json || CINEINFER_MODELS_DIR=$(SANDBOX) $(PY) -m src.pipeline seed-registry --from-candidate $(PHASE8_CANDIDATE)
+	CINEINFER_MODELS_DIR=$(SANDBOX) CINEINFER_PUBLISH_LOG=$(CURDIR)/results/publish_log_sandbox.csv \
+		$(AIRFLOW_ENV) .venv-airflow/bin/airflow dags test cineinfer_retrain
 
 airflow-ui: airflow-install
 	$(AIRFLOW_ENV) .venv-airflow/bin/airflow standalone

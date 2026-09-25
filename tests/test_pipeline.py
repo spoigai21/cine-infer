@@ -45,20 +45,20 @@ def test_init_registry_moves_bundle_behind_a_symlink(world):
 
 def test_worse_or_equal_candidate_is_rejected_and_logged(world):
     pl.init_registry()
-    for run, score in (("worse", 0.12), ("equal", 0.15)):
+    for run, score in (("worse", 0.12), ("equal", 0.15), ("within_noise", 0.15 + pl.MIN_GAIN / 2)):
         candidate(run, score, 1)
         assert pl.gate(run) == "reject"
         with pytest.raises(RuntimeError, match="refusing to publish"):
             pl.publish(run)
     log = pd.read_csv(pl.PUBLISH_LOG)
-    assert list(log.decision) == ["reject", "reject"] and list(log.epochs) == [1, 1]
+    assert list(log.decision) == ["reject"] * 3 and list(log.epochs) == [1] * 3
     assert pl.load_registry()["live"]["model_id"] == "phase7"   # live model untouched
     assert os.readlink(pl.SERVING) == "bundles/phase7"
 
 
 def test_better_candidate_swaps_live_bundle_and_registry(world, monkeypatch):
     pl.init_registry()
-    candidate("better", 0.16, 6)
+    candidate("better", 0.15 + pl.MIN_GAIN + 0.001, 6)
     assert pl.gate("better") == "publish"
     built = []
 
@@ -72,7 +72,7 @@ def test_better_candidate_swaps_live_bundle_and_registry(world, monkeypatch):
     assert built == ["better"]
     assert json.loads((pl.SERVING / "manifest.json").read_text()) == {"id": "better"}
     reg = pl.load_registry()
-    assert reg["live"]["model_id"] == "better" and reg["live"]["val_ndcg@10"] == 0.16
+    assert reg["live"]["model_id"] == "better" and reg["live"]["val_ndcg@10"] > 0.15 + pl.MIN_GAIN
     assert reg["history"][-1]["model_id"] == "phase7"
     assert not list(pl.MODELS.glob(".serving.*.tmp"))
 
@@ -95,3 +95,11 @@ def test_dag_structure_in_airflow_env():
     assert out["errors"] == {}
     assert out["edges"] == {"prep": ["train"], "train": ["evaluate"], "evaluate": ["gate"],
                             "gate": ["publish", "reject"], "publish": [], "reject": []}
+
+
+def test_seed_registry_from_candidate(world):
+    candidate("weak", 0.10, 1)
+    reg = pl.seed_registry(pl.CANDIDATES / "weak")
+    assert reg["live"] == {**reg["live"], "model_id": "weak", "val_ndcg@10": 0.10, "bundle": None}
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        pl.seed_registry(pl.CANDIDATES / "weak")
