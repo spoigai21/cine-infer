@@ -44,7 +44,57 @@ FEATURES = ["tt_score", "tt_rank", "ease_score", "ease_rank",
             "genre_overlap", "genre_max",
             "genome_sim_all", "genome_sim_recent", "has_genome"]
 EASE_FEATURES = ["ease_score", "ease_rank"]
+# Point-in-time versions of the item features: computed only from ratings made strictly before
+# the user's last rating in the training set (see ItemTimeline). NaN when the context has no
+# timeline, so pipelines that don't use them are unaffected.
+PIT_FEATURES = ["pit_item_log_n", "pit_item_log_pos", "pit_item_mean", "pit_days_since_last",
+                "pit_age_days"]
+BASE_FEATURES = list(FEATURES)  # the 17 Phase 6 features (headline + ablations are drawn from these)
+FEATURES = FEATURES + PIT_FEATURES
 DAY = 86_400.0
+
+
+class ItemTimeline:
+    """Per-movie cumulative rating counts over time, for point-in-time item features.
+
+    Built from ALL ratings (any split): what was known about a movie at time T is every rating
+    made before T, by anyone. Queried with a strict `ts < T`, so ratings in the same second as
+    the user's cutoff (including the user's own held-out ones) are never counted. Exact: sorted
+    (movie, timestamp) keys with prefix sums, one searchsorted per (user, candidate).
+    """
+
+    def __init__(self, item_idx, timestamps, ratings, n_items):
+        order = np.lexsort((timestamps, item_idx))
+        it, ts, r = item_idx[order].astype(np.int64), timestamps[order].astype(np.int64), ratings[order]
+        self.keys = (it << 32) | ts
+        self.ts = ts
+        self.off = np.searchsorted(it, np.arange(n_items + 1))
+        self.cum_pos = np.concatenate([[0], np.cumsum(r >= 4.0)])
+        self.cum_sum = np.concatenate([[0.0], np.cumsum(r)])
+
+    @classmethod
+    def from_ratings(cls, ratings_fine, items):
+        """ratings_fine: evaluate.load_ratings(...); needs userId, movieId, rating, timestamp."""
+        return cls(items.to_index(ratings_fine.movieId.to_numpy()), ratings_fine.timestamp.to_numpy(),
+                   ratings_fine.rating.to_numpy(), len(items))
+
+    def features(self, cand, cutoff):
+        """cand: (B, k) item indices; cutoff: (B,) timestamps. Returns dict of (B, k) arrays."""
+        c = np.maximum(cand, 0).astype(np.int64)
+        t = np.broadcast_to(np.asarray(cutoff, dtype=np.int64)[:, None], c.shape)
+        g = np.searchsorted(self.keys, (c << 32) | t, side="left")   # ratings with ts < cutoff
+        start = self.off[c]
+        n = (g - start).astype(np.float64)
+        has = n > 0
+        pos = self.cum_pos[g] - self.cum_pos[start]
+        tot = self.cum_sum[g] - self.cum_sum[start]
+        last = np.where(has, self.ts[np.maximum(g - 1, 0)], 0)
+        first = np.where(has, self.ts[np.minimum(start, len(self.ts) - 1)], 0)
+        nan = np.full(c.shape, np.nan)
+        return {"pit_item_log_n": np.log1p(n), "pit_item_log_pos": np.log1p(pos),
+                "pit_item_mean": np.where(has, tot / np.maximum(n, 1), nan),
+                "pit_days_since_last": np.where(has, (t - last) / DAY, nan),
+                "pit_age_days": np.where(has, (t - first) / DAY, nan)}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -112,6 +162,7 @@ class TrainingSetContext:
     user_genres: np.ndarray     # users x genres, share of positives
     k: int = K_CANDIDATES
     extra: dict = field(default_factory=dict)
+    timeline: object = None     # ItemTimeline for the point-in-time features (optional)
 
     @classmethod
     def build(cls, name, retriever, ease, seq, ratings_fine, training, features_dir, items,
@@ -193,6 +244,12 @@ def build_features(ctx: TrainingSetContext, user_ids, use_ease: bool = True):
     sim_all, sim_recent = genome_similarity(ctx, rows, cand)
     F["genome_sim_all"], F["genome_sim_recent"] = sim_all, sim_recent
     F["has_genome"] = ctx.content.has_genome[cand].astype(np.float32)
+    if ctx.timeline is not None:
+        # cutoff = the user's last rating in this training set (Phase 1 user features)
+        F.update(ctx.timeline.features(cand, ust[:, 3].astype(np.int64)))
+    else:
+        for f in PIT_FEATURES:
+            F[f] = np.full((B, k), np.nan, dtype=np.float32)
     X = np.stack([np.asarray(F[f], dtype=np.float32) for f in FEATURES], axis=-1)
     X[~valid] = np.nan
     return cand_raw, X

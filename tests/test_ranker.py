@@ -202,3 +202,51 @@ def test_lightgbm_runs_in_its_own_process_without_torch(ctx15, env, tmp_path):
     assert (tmp_path / "m.txt").exists() and 1 <= c["rounds"] <= 20   # early-stopped
     with pytest.raises(RuntimeError, match="lgb_ranker failed"):
         rk.run_lgb(tmp_path, cfg, seed=0, features=["no_such_feature"], pred_out=tmp_path / "d.npy")
+
+
+def test_point_in_time_features_match_brute_force(env):
+    """Each pit_* feature equals a plain count over ALL ratings made strictly before the user's
+    last training rating; nothing from the cutoff second (incl. the user's own held-out ratings)
+    or later is ever counted."""
+    ctx = make_ctx(env, "train", ("train_core", "train_tail"), k=10)
+    allr = env["splits"]
+    ctx.timeline = rk.ItemTimeline.from_ratings(allr, env["items"])
+    users = users_with_core(ctx)
+    cand, X = rk.build_features(ctx, users)
+    f = {n: X[..., i] for i, n in enumerate(rk.FEATURES)}
+    mid = env["items"].movie_ids
+    train = allr[allr.split_user == "train"]
+    checked = 0
+    for i, u in enumerate(users):
+        cutoff = train[train.userId == u].timestamp.max()
+        for j, c in enumerate(cand[i]):
+            if c < 0:
+                continue
+            past = allr[(allr.movieId == mid[c]) & (allr.timestamp < cutoff)]
+            assert f["pit_item_log_n"][i, j] == pytest.approx(np.log1p(len(past)))
+            assert f["pit_item_log_pos"][i, j] == pytest.approx(np.log1p((past.rating >= 4).sum()))
+            if len(past):
+                assert f["pit_item_mean"][i, j] == pytest.approx(past.rating.mean(), rel=1e-5)
+                assert f["pit_days_since_last"][i, j] == pytest.approx((cutoff - past.timestamp.max()) / 86400, rel=1e-5)
+                assert f["pit_age_days"][i, j] == pytest.approx((cutoff - past.timestamp.min()) / 86400, rel=1e-5)
+                checked += 1
+            else:
+                assert np.isnan(f["pit_item_mean"][i, j])
+    assert checked > 20
+
+
+def test_pit_features_are_nan_without_timeline(ctx):
+    _, X = rk.build_features(ctx, users_with_core(ctx)[:3])
+    for name in rk.PIT_FEATURES:
+        assert np.isnan(X[..., rk.FEATURES.index(name)]).all()
+
+
+def test_headline_and_ablation_feature_sets_are_unchanged():
+    """Adding feature columns (e.g. point-in-time) must never change what the headline ranker
+    and its sealed ablations use: they're pinned here."""
+    from src.tune_ranker import ABLATIONS, HEADLINE
+    assert len(rk.BASE_FEATURES) == 17
+    assert HEADLINE == [f for f in rk.BASE_FEATURES if f not in ("item_days_since_last", "item_age_days")]
+    assert len(HEADLINE) == 15
+    assert ABLATIONS["with_time"][0] == rk.BASE_FEATURES
+    assert not set(HEADLINE) & set(rk.PIT_FEATURES)

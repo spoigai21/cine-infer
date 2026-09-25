@@ -53,10 +53,10 @@ RANKER_TRAIN_USERS = 30_000
 TIME_FEATURES = ["item_days_since_last", "item_age_days"]
 # The headline two-stage system leaves the time features out (decided after measuring them:
 # they carried ~18% of the ranker's gain on validation, the part a live system couldn't have).
-HEADLINE = [f for f in rk.FEATURES if f not in TIME_FEATURES]
+HEADLINE = [f for f in rk.BASE_FEATURES if f not in TIME_FEATURES]
 ABLATIONS = {"no_ease": ([f for f in HEADLINE if f not in rk.EASE_FEATURES],
                          "headline minus EASE features"),
-             "with_time": (list(rk.FEATURES),
+             "with_time": (list(rk.BASE_FEATURES),
                            "headline plus time features (cross-user future leak, not used)")}
 
 

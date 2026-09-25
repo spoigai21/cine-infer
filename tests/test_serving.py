@@ -22,7 +22,7 @@ from src.export_serving import export_bundle
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 ROOT = Path(__file__).resolve().parent.parent
-HEADLINE = [f for f in rk.FEATURES if f not in ("item_days_since_last", "item_age_days")]
+HEADLINE = [f for f in rk.BASE_FEATURES if f not in ("item_days_since_last", "item_age_days")]
 TV_FINE = ("train_core", "train_tail", "val")
 
 
